@@ -1,15 +1,14 @@
 import copy
 import pickle
 import warnings
-import sys
 from sympy.utilities.pytest import XFAIL
 
 from sympy.core.basic import Atom, Basic
-from sympy.core.core import BasicMeta, BasicType, ClassRegistry
+from sympy.core.core import BasicMeta
 from sympy.core.singleton import SingletonRegistry
 from sympy.core.symbol import Dummy, Symbol, Wild
-from sympy.core.numbers import (E, I, pi, oo, zoo, nan, Integer, Number,
-        NumberSymbol, Rational, Float)
+from sympy.core.numbers import (E, I, pi, oo, zoo, nan, Integer,
+        Rational, Float)
 from sympy.core.relational import (Equality, GreaterThan, LessThan, Relational,
         StrictGreaterThan, StrictLessThan, Unequality)
 from sympy.core.add import Add
@@ -17,12 +16,10 @@ from sympy.core.mul import Mul
 from sympy.core.power import Pow
 from sympy.core.function import Derivative, Function, FunctionClass, Lambda, \
     WildFunction
-from sympy.core.sets import Interval
+from sympy.sets.sets import Interval
 from sympy.core.multidimensional import vectorize
-from sympy.functions import exp
-#from sympy.core.ast_parser import SymPyParser, SymPyTransformer
 
-from sympy.core.compatibility import HAS_GMPY
+from sympy.core.compatibility import HAS_GMPY, PY3
 from sympy.utilities.exceptions import SymPyDeprecationWarning
 
 from sympy import symbols, S
@@ -33,25 +30,19 @@ excluded_attrs = set(['_assumptions', '_mhash'])
 def check(a, exclude=[], check_attr=True):
     """ Check that pickling and copying round-trips.
     """
-    # The below hasattr() check will warn about is_Real in Python 2.5, so
-    # disable this to keep the tests clean
-    # XXX: Really? It *does* warn in 2.7.2 too.
-    warnings.filterwarnings("ignore", category=SymPyDeprecationWarning)
-    # We don't care about DeprecationWarnings in the hasattr() check either;
-    # deprecated or no, the attributes need to be the same.
     # Python 2.6+ warns about BasicException.message, for example.
     warnings.filterwarnings("ignore", category=DeprecationWarning)
 
     protocols = [0, 1, 2, copy.copy, copy.deepcopy]
     # Python 2.x doesn't support the third pickling protocol
-    if sys.version_info[0] > 2:
+    if PY3:
         protocols.extend([3])
     for protocol in protocols:
         if protocol in exclude:
             continue
 
         if callable(protocol):
-            if isinstance(a, BasicType):
+            if isinstance(a, BasicMeta):
                 # Classes can't be copied, but that's okay.
                 return
             b = protocol(a)
@@ -88,8 +79,6 @@ def test_core_basic():
               Basic, Basic(),
               # XXX: dynamically created types are not picklable
               # BasicMeta, BasicMeta("test", (), {}),
-              # BasicType, BasicType("test", (), {}),
-              ClassRegistry, ClassRegistry(),
               SingletonRegistry, SingletonRegistry()):
         check(c)
 
@@ -162,7 +151,7 @@ def test_core_multidimensional():
 
 def test_Singletons():
     protocols = [0, 1, 2]
-    if sys.version_info[0] > 2:
+    if PY3:
         protocols.extend([3])
     copiers = [copy.copy, copy.deepcopy]
     copiers += [lambda x: pickle.loads(pickle.dumps(x, proto))
@@ -600,12 +589,12 @@ def test_pickling_polys_options():
 #    ComplexInterval
 
 def test_pickling_polys_rootoftools():
-    from sympy.polys.rootoftools import RootOf, RootSum
+    from sympy.polys.rootoftools import CRootOf, RootSum
 
     x = Symbol('x')
     f = x**3 + x + 3
 
-    for c in (RootOf, RootOf(f, 0)):
+    for c in (CRootOf, CRootOf(f, 0)):
         check(c)
 
     for c in (RootSum, RootSum(f, exp)):

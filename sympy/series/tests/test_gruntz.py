@@ -1,8 +1,9 @@
 from sympy import Symbol, exp, log, oo, Rational, I, sin, gamma, loggamma, S, \
-    atan, acot, pi, cancel, E, erf, sqrt, zeta, cos, digamma, Integer
+    atan, acot, pi, cancel, E, erf, sqrt, zeta, cos, digamma, Integer, Ei, EulerGamma
+from sympy.functions.elementary.hyperbolic import cosh, coth, sinh, tanh
 from sympy.series.gruntz import compare, mrv, rewrite, mrv_leadterm, gruntz, \
     sign
-from sympy.utilities.pytest import XFAIL, skip
+from sympy.utilities.pytest import XFAIL, skip, slow
 
 """
 This test suite is testing the limit algorithm using the bottom up approach.
@@ -11,8 +12,7 @@ by nature, so "compare" is logically the lowest part of the algorithm, yet in
 some sense it's the most complex part, because it needs to calculate a limit
 to return the result.
 
-Nevertheless the rest of the algorithm depends on compare that it works
-correctly.
+Nevertheless, the rest of the algorithm depends on compare working correctly.
 """
 
 x = Symbol('x', real=True)
@@ -27,6 +27,7 @@ def _sskip():
         skip("slow")
 
 
+@slow
 def test_gruntz_evaluation():
     # Gruntz' thesis pp. 122 to 123
     # 8.1
@@ -94,6 +95,7 @@ def test_gruntz_evaluation_slow():
                   / (exp(-x/(1 + exp(-x))))**2 - exp(x) + x, x, oo) == 2
 
 
+@slow
 def test_gruntz_eval_special():
     # Gruntz, p. 126
     assert gruntz(exp(x)*(sin(1/x + exp(-x)) - sin(1/x + exp(-x**2))), x, oo) == 1
@@ -138,6 +140,21 @@ def test_gruntz_eval_special_fail():
         exp((log(2) + 1)*x) * (zeta(x + exp(-x)) - zeta(x)), x, oo) == -log(2)
 
     # TODO 8.35 - 8.37 (bessel, max-min)
+
+
+def test_gruntz_hyperbolic():
+    assert gruntz(cosh(x), x, oo) == oo
+    assert gruntz(cosh(x), x, -oo) == oo
+    assert gruntz(sinh(x), x, oo) == oo
+    assert gruntz(sinh(x), x, -oo) == -oo
+    assert gruntz(2*cosh(x)*exp(x), x, oo) == oo
+    assert gruntz(2*cosh(x)*exp(x), x, -oo) == 1
+    assert gruntz(2*sinh(x)*exp(x), x, oo) == oo
+    assert gruntz(2*sinh(x)*exp(x), x, -oo) == -1
+    assert gruntz(tanh(x), x, oo) == 1
+    assert gruntz(tanh(x), x, -oo) == -1
+    assert gruntz(coth(x), x, oo) == 1
+    assert gruntz(coth(x), x, -oo) == -1
 
 
 def test_compare1():
@@ -357,9 +374,9 @@ def test_limit3():
 
 
 def test_limit4():
-    #issue 364
+    #issue 3463
     assert gruntz((3**x + 5**x)**(1/x), x, oo) == 5
-    #issue 364
+    #issue 3463
     assert gruntz((3**(1/x) + 5**(1/x))**x, x, 0) == 5
 
 
@@ -373,14 +390,15 @@ def test_MrvTestCase_page47_ex3_21():
 
 
 def test_I():
+    from sympy.functions import sign as sgn
     y = Symbol("y")
     assert gruntz(I*x, x, oo) == I*oo
     assert gruntz(y*I*x, x, oo) == y*I*oo
     assert gruntz(y*3*I*x, x, oo) == y*I*oo
-    assert gruntz(y*3*sin(I)*x, x, oo) == y*I*oo
+    assert gruntz(y*3*sin(I)*x, x, oo).simplify() == sgn(y)*I*oo
 
 
-def test_issue1715():
+def test_issue_4814():
     assert gruntz((x + 1)**(1/log(x + 1)), x, oo) == E
 
 
@@ -405,11 +423,45 @@ def test_exp_log_series():
     assert gruntz(x/log(log(x*exp(x))), x, oo) == oo
 
 
-def test_issue545():
+def test_issue_3644():
     assert gruntz(((x**7 + x + 1)/(2**x + x**2))**(-1/x), x, oo) == 2
 
 
-def test_issue3744():
+def test_issue_6843():
     n = Symbol('n', integer=True, positive=True)
     r = (n + 1)*x**(n + 1)/(x**(n + 1) - 1) - x/(x - 1)
     assert gruntz(r, x, 1).simplify() == n/2
+
+
+def test_issue_4190():
+    assert gruntz(x - gamma(1/x), x, oo) == S.EulerGamma
+
+
+@XFAIL
+def test_issue_5172():
+    n = Symbol('n')
+    r = Symbol('r', positive=True)
+    c = Symbol('c')
+    p = Symbol('p', positive=True)
+    m = Symbol('m', negative=True)
+    expr = ((2*n*(n - r + 1)/(n + r*(n - r + 1)))**c + \
+        (r - 1)*(n*(n - r + 2)/(n + r*(n - r + 1)))**c - n)/(n**c - n)
+    expr = expr.subs(c, c + 1)
+    assert gruntz(expr.subs(c, m), n, oo) == 1
+    # fail:
+    assert gruntz(expr.subs(c, p), n, oo).simplify() == \
+        (2**(p + 1) + r - 1)/(r + 1)**(p + 1)
+
+
+def test_issue_4109():
+    assert gruntz(1/gamma(x), x, 0) == 0
+    assert gruntz(x*gamma(x), x, 0) == 1
+
+
+def test_issue_6682():
+    assert gruntz(exp(2*Ei(-x))/x**2, x, 0) == exp(2*EulerGamma)
+
+
+def test_issue_7096():
+    from sympy.functions import sign
+    assert gruntz(x**-pi, x, 0, dir='-') == oo*sign((-1)**(-pi))

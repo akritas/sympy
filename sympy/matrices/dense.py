@@ -1,9 +1,10 @@
 from __future__ import print_function, division
 
 import random
+from sympy import Derivative
 
 from sympy.core.basic import Basic
-from sympy.core.compatibility import is_sequence, as_int
+from sympy.core.compatibility import is_sequence, as_int, range
 from sympy.core.function import count_ops
 from sympy.core.decorators import call_highest_priority
 from sympy.core.singleton import S
@@ -12,7 +13,6 @@ from sympy.core.sympify import sympify
 from sympy.functions.elementary.trigonometric import cos, sin
 from sympy.functions.elementary.miscellaneous import sqrt
 from sympy.simplify import simplify as _simplify
-from sympy.utilities.exceptions import SymPyDeprecationWarning
 from sympy.utilities.misc import filldedent
 from sympy.utilities.decorator import doctest_depends_on
 
@@ -68,16 +68,30 @@ class DenseMatrix(MatrixBase):
         >>> m[::2]
         [1, 3]
         """
-        if type(key) is tuple:
+        if isinstance(key, tuple):
             i, j = key
-            if type(i) is slice or type(j) is slice:
-                return self.submatrix(key)
-            else:
+            try:
                 i, j = self.key2ij(key)
                 return self._mat[i*self.cols + j]
+            except (TypeError, IndexError):
+                if isinstance(i, slice):
+                    # XXX remove list() when PY2 support is dropped
+                    i = list(range(self.rows))[i]
+                elif is_sequence(i):
+                    pass
+                else:
+                    i = [i]
+                if isinstance(j, slice):
+                    # XXX remove list() when PY2 support is dropped
+                    j = list(range(self.cols))[j]
+                elif is_sequence(j):
+                    pass
+                else:
+                    j = [j]
+                return self.extract(i, j)
         else:
             # row-wise decomposition of matrix
-            if type(key) is slice:
+            if isinstance(key, slice):
                 return self._mat[key]
             return self._mat[a2idx(key)]
 
@@ -128,7 +142,7 @@ class DenseMatrix(MatrixBase):
         return [self._mat[i: i + self.cols]
             for i in range(0, len(self), self.cols)]
 
-    def row(self, i, f=None):
+    def row(self, i):
         """Elementary row selector.
 
         Examples
@@ -148,16 +162,9 @@ class DenseMatrix(MatrixBase):
         row_join
         row_insert
         """
-        if f is None:
-            return self[i, :]
-        SymPyDeprecationWarning(
-            feature="calling .row(i, f)",
-            useinstead=".row_op(i, f)",
-            deprecated_since_version="0.7.2",
-        ).warn()
-        self.row_op(i, f)
+        return self[i, :]
 
-    def col(self, j, f=None):
+    def col(self, j):
         """Elementary column selector.
 
         Examples
@@ -179,14 +186,7 @@ class DenseMatrix(MatrixBase):
         col_join
         col_insert
         """
-        if f is None:
-            return self[:, j]
-        SymPyDeprecationWarning(
-            feature="calling .col(j, f)",
-            useinstead=".col_op(j, f)",
-            deprecated_since_version="0.7.2",
-        ).warn()
-        self.col_op(j, f)
+        return self[:, j]
 
     def _eval_trace(self):
         """Calculate the trace of a square matrix.
@@ -315,6 +315,12 @@ class DenseMatrix(MatrixBase):
             # if a new method is added.
             raise ValueError("Inversion method unrecognized")
         return self._new(rv)
+
+    def _eval_diff(self, *args, **kwargs):
+        if kwargs.pop("evaluate", True):
+            return self.diff(*args)
+        else:
+            return Derivative(self, *args, **kwargs)
 
     def equals(self, other, failing_expression=False):
         """Applies ``equals`` to corresponding elements of the matrices,
@@ -504,22 +510,14 @@ class DenseMatrix(MatrixBase):
         """Returns an Immutable version of this Matrix
         """
         from .immutable import ImmutableMatrix as cls
-        if self.rows:
+        if self.rows and self.cols:
             return cls._new(self.tolist())
-        return cls._new(0, self.cols, [])
+        return cls._new(self.rows, self.cols, [])
 
     @classmethod
     def zeros(cls, r, c=None):
         """Return an r x c matrix of zeros, square if c is omitted."""
-        if is_sequence(r):
-            SymPyDeprecationWarning(
-                feature="The syntax zeros([%i, %i])" % tuple(r),
-                useinstead="zeros(%i, %i)." % tuple(r),
-                issue=3381, deprecated_since_version="0.7.2",
-            ).warn()
-            r, c = r
-        else:
-            c = r if c is None else c
+        c = r if c is None else c
         r = as_int(r)
         c = as_int(c)
         return cls._new(r, c, [cls._sympify(0)]*r*c)
@@ -813,8 +811,7 @@ class MutableDenseMatrix(DenseMatrix, MatrixBase):
         col
         row_op
         """
-        self._mat[j::self.cols] = list(map(lambda t: f(*t),
-            list(zip(self._mat[j::self.cols], list(range(self.rows))))))
+        self._mat[j::self.cols] = [f(*t) for t in list(zip(self._mat[j::self.cols], list(range(self.rows))))]
 
     def row_swap(self, i, j):
         """Swap the two given rows of the matrix in-place.
@@ -890,7 +887,12 @@ class MutableDenseMatrix(DenseMatrix, MatrixBase):
         row
         col_del
         """
-        self._mat = self._mat[:i*self.cols] + self._mat[(i + 1)*self.cols:]
+        if i < -self.rows or i >= self.rows:
+            raise IndexError("Index out of range: 'i = %s', valid -%s <= i"
+                             " < %s" % (i, self.rows, self.rows))
+        if i < 0:
+            i += self.rows
+        del self._mat[i*self.cols:(i+1)*self.cols]
         self.rows -= 1
 
     def col_del(self, i):
@@ -914,6 +916,9 @@ class MutableDenseMatrix(DenseMatrix, MatrixBase):
         col
         row_del
         """
+        if i < -self.cols or i >= self.cols:
+            raise IndexError("Index out of range: 'i=%s', valid -%s <= i < %s"
+                             % (i, self.cols, self.cols))
         for j in range(self.rows - 1, -1, -1):
             del self._mat[i + j*self.cols]
         self.cols -= 1
@@ -952,7 +957,7 @@ MutableMatrix = Matrix = MutableDenseMatrix
 ###########
 
 
-def list2numpy(l):  # pragma: no cover
+def list2numpy(l, dtype=object):  # pragma: no cover
     """Converts python list of SymPy expressions to a NumPy array.
 
     See Also
@@ -961,13 +966,13 @@ def list2numpy(l):  # pragma: no cover
     matrix2numpy
     """
     from numpy import empty
-    a = empty(len(l), dtype=object)
+    a = empty(len(l), dtype)
     for i, s in enumerate(l):
         a[i] = s
     return a
 
 
-def matrix2numpy(m):  # pragma: no cover
+def matrix2numpy(m, dtype=object):  # pragma: no cover
     """Converts SymPy's matrix to a NumPy array.
 
     See Also
@@ -976,14 +981,14 @@ def matrix2numpy(m):  # pragma: no cover
     list2numpy
     """
     from numpy import empty
-    a = empty(m.shape, dtype=object)
+    a = empty(m.shape, dtype)
     for i in range(m.rows):
         for j in range(m.cols):
             a[i, j] = m[i, j]
     return a
 
 @doctest_depends_on(modules=('numpy',))
-def symarray(prefix, shape):  # pragma: no cover
+def symarray(prefix, shape, **kwargs):  # pragma: no cover
     """Create a numpy ndarray of symbols (as an object array).
 
     The created symbols are named ``prefix_i1_i2_``...  You should thus provide a
@@ -1000,8 +1005,11 @@ def symarray(prefix, shape):  # pragma: no cover
       Shape of the created array.  If an int, the array is one-dimensional; for
       more than one dimension the shape must be a tuple.
 
+    \*\*kwargs : dict
+      keyword arguments passed on to Symbol
+
     Examples
-    --------
+    ========
     These doctests require numpy.
 
     >>> from sympy import symarray
@@ -1013,11 +1021,11 @@ def symarray(prefix, shape):  # pragma: no cover
 
     >>> a = symarray('', 3)
     >>> b = symarray('', 3)
-    >>> a[0] is b[0]
+    >>> a[0] == b[0]
     True
     >>> a = symarray('a', 3)
     >>> b = symarray('b', 3)
-    >>> a[0] is b[0]
+    >>> a[0] == b[0]
     False
 
     Creating symarrays with a prefix:
@@ -1039,11 +1047,16 @@ def symarray(prefix, shape):  # pragma: no cover
       [a_1_1_0 a_1_1_1]
       [a_1_2_0 a_1_2_1]]]
 
+    For setting assumptions of the underlying Symbols:
+
+    >>> [s.is_real for s in symarray('a', 2, real=True)]
+    [True, True]
     """
     from numpy import empty, ndindex
     arr = empty(shape, dtype=object)
     for index in ndindex(shape):
-        arr[index] = Symbol('%s_%s' % (prefix, '_'.join(map(str, index))))
+        arr[index] = Symbol('%s_%s' % (prefix, '_'.join(map(str, index))),
+                            **kwargs)
     return arr
 
 
@@ -1180,24 +1193,6 @@ def rot_axis1(theta):
 ###############
 
 
-def matrix_add(A, B):
-    SymPyDeprecationWarning(
-        feature="matrix_add(A, B)",
-        useinstead="A + B",
-        deprecated_since_version="0.7.2",
-    ).warn()
-    return A + B
-
-
-def matrix_multiply(A, B):
-    SymPyDeprecationWarning(
-        feature="matrix_multiply(A, B)",
-        useinstead="A*B",
-        deprecated_since_version="0.7.2",
-    ).warn()
-    return A*B
-
-
 def matrix_multiply_elementwise(A, B):
     """Return the Hadamard product (elementwise product) of A and B
 
@@ -1235,15 +1230,7 @@ def ones(r, c=None):
     """
     from .dense import Matrix
 
-    if is_sequence(r):
-        SymPyDeprecationWarning(
-            feature="The syntax ones([%i, %i])" % tuple(r),
-            useinstead="ones(%i, %i)." % tuple(r),
-            issue=3381, deprecated_since_version="0.7.2",
-        ).warn()
-        r, c = r
-    else:
-        c = r if c is None else c
+    c = r if c is None else c
     r = as_int(r)
     c = as_int(c)
     return Matrix(r, c, [S.One]*r*c)
@@ -1507,7 +1494,7 @@ def hessian(f, varlist, constraints=[]):
     return out
 
 
-def GramSchmidt(vlist, orthog=False):
+def GramSchmidt(vlist, orthonormal=False):
     """
     Apply the Gram-Schmidt process to a set of vectors.
 
@@ -1523,7 +1510,7 @@ def GramSchmidt(vlist, orthog=False):
             raise ValueError(
                 "GramSchmidt: vector set not linearly independent")
         out.append(tmp)
-    if orthog:
+    if orthonormal:
         for i in range(len(out)):
             out[i] = out[i].normalized()
     return out
@@ -1606,11 +1593,22 @@ def casoratian(seqs, n, zero=True):
     return Matrix(k, k, f).det()
 
 
-def randMatrix(r, c=None, min=0, max=99, seed=None, symmetric=False, percent=100):
+def randMatrix(r, c=None, min=0, max=99, seed=None, symmetric=False,
+               percent=100, prng=None):
     """Create random matrix with dimensions ``r`` x ``c``. If ``c`` is omitted
     the matrix will be square. If ``symmetric`` is True the matrix must be
     square. If ``percent`` is less than 100 then only approximately the given
     percentage of elements will be non-zero.
+
+    The pseudo-random number generator used to generate matrix is chosen in the
+    following way.
+
+    * If ``prng`` is supplied, it will be used as random number generator.
+      It should be an instance of :class:`random.Random`, or at least have
+      ``randint`` and ``shuffle`` methods with same signatures.
+    * if ``prng`` is not supplied but ``seed`` is supplied, then new
+      :class:`random.Random` with given ``seed`` will be created;
+    * otherwise, a new :class:`random.Random` with default seed will be used.
 
     Examples
     ========
@@ -1645,10 +1643,8 @@ def randMatrix(r, c=None, min=0, max=99, seed=None, symmetric=False, percent=100
     """
     if c is None:
         c = r
-    if seed is None:
-        prng = random.Random()  # use system time
-    else:
-        prng = random.Random(seed)
+    # Note that ``Random()`` is equivalent to ``Random(None)``
+    prng = prng or random.Random(seed)
     if symmetric and r != c:
         raise ValueError(
             'For symmetric matrices, r must equal c, but %i != %i' % (r, c))
