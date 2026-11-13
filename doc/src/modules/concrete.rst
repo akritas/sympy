@@ -1,5 +1,6 @@
-Concrete Mathematics
-====================
+========
+Concrete
+========
 
 Hypergeometric terms
 --------------------
@@ -79,26 +80,15 @@ hypergeometric:
     >>> hypersimp(factorial(n**2), n)
 
 
-Sum and Product manipulation
-----------------------------
-
-.. autofunction:: sympy.concrete.simplification.index
-
-.. autofunction:: sympy.concrete.simplification.change_index
-
-.. autofunction:: sympy.concrete.simplification.reorder_limit
-
-.. autofunction:: sympy.concrete.simplification.reorder
-
-.. autofunction:: sympy.concrete.simplification.reverse_order
-
-
 Concrete Class Reference
 ------------------------
 .. autoclass:: sympy.concrete.summations.Sum
    :members:
 
 .. autoclass:: sympy.concrete.products.Product
+   :members:
+
+.. autoclass:: sympy.concrete.expr_with_intlimits.ExprWithIntLimits
    :members:
 
 Concrete Functions Reference
@@ -113,3 +103,18 @@ Concrete Functions Reference
 .. autofunction:: sympy.concrete.gosper.gosper_term
 
 .. autofunction:: sympy.concrete.gosper.gosper_sum
+
+Concrete Guess Functions Reference
+----------------------------------
+
+.. autofunction:: sympy.concrete.guess.guess
+
+.. autofunction:: sympy.concrete.guess.guess_generating_function
+
+.. autofunction:: sympy.concrete.guess.guess_generating_function_rational
+
+.. autofunction:: sympy.concrete.guess.rationalize
+
+.. autofunction:: sympy.concrete.guess.find_simple_recurrence
+
+.. autofunction:: sympy.concrete.guess.find_simple_recurrence_vector

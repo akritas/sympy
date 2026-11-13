@@ -2,10 +2,10 @@
 You can find lots of cnf files in
 ftp://dimacs.rutgers.edu/pub/challenge/satisfiability/benchmarks/cnf/
 """
+from __future__ import annotations
 
 from sympy.logic.utilities.dimacs import load
 from sympy.logic.algorithms.dpll import dpll_satisfiable
-from sympy.utilities.pytest import skip
 
 
 def test_f1():
@@ -74,10 +74,11 @@ p cnf 6 9
 """
 
 f4 = """c
+c file:   hole6.cnf [http://people.sc.fsu.edu/~jburkardt/data/cnf/hole6.cnf]
 c
 c SOURCE: John Hooker (jh38+@andrew.cmu.edu)
 c
-c DESCRIPTION: Pigeon hole problem of placing n (for file holen) pigeons
+c DESCRIPTION: Pigeon hole problem of placing n (for file 'holen.cnf') pigeons
 c              in n+1 holes without placing 2 pigeons in the same hole
 c
 c NOTE: Part of the collection at the Forschungsinstitut fuer

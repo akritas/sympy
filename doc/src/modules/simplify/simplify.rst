@@ -1,139 +1,86 @@
+.. _simplify-docs:
+
+========
 Simplify
-********
+========
 
 .. currentmodule:: sympy.simplify.simplify
 
-simplify
---------
 .. autofunction:: simplify
 
-collect
--------
+.. autofunction:: separatevars
+
+.. autofunction:: nthroot
+
+.. autofunction:: kroneckersimp
+
+.. autofunction:: besselsimp
+
+.. autofunction:: hypersimp
+
+.. autofunction:: hypersimilar
+
+.. autofunction:: nsimplify
+
+.. autofunction:: posify
+
+.. autofunction:: logcombine
+
+.. module:: sympy.simplify.radsimp
+
+.. autofunction:: radsimp
+
+.. autofunction:: rad_rationalize
+
 .. autofunction:: collect
 
 .. autofunction:: rcollect
 
-separate
---------
-.. autofunction:: separate
-
-separatevars
-------------
-
-.. autofunction:: separatevars
-
-nthroot
--------
-.. autofunction:: nthroot
-
-
-rad_rationalize
----------------
-.. autofunction:: rad_rationalize
-
-
-radsimp
--------
-.. autofunction:: radsimp
-
-ratsimp
--------
-.. autofunction:: ratsimp
-
-fraction
---------
-.. autofunction:: fraction
-
-trigsimp
---------
-.. autofunction:: trigsimp
-
-besselsimp
-----------
-.. autofunction:: besselsimp
-
-powsimp
--------
-.. autofunction:: powsimp
-
-combsimp
---------
-.. autofunction:: combsimp
-
-hypersimp
----------
-.. autofunction:: hypersimp
-
-hypersimilar
-------------
-.. autofunction:: hypersimilar
-
-nsimplify
----------
-.. autofunction:: nsimplify
-
-collect_sqrt
-------------
 .. autofunction:: collect_sqrt
 
-collect_const
--------------
 .. autofunction:: collect_const
 
-posify
-------
-.. autofunction:: posify
+.. autofunction:: fraction
 
-powdenest
----------
+.. module:: sympy.simplify.ratsimp
+
+.. autofunction:: ratsimp
+
+.. autofunction:: ratsimpmodprime
+
+.. module:: sympy.simplify.trigsimp
+
+.. autofunction:: trigsimp
+
+.. module:: sympy.simplify.powsimp
+
+.. autofunction:: powsimp
+
 .. autofunction:: powdenest
 
-logcombine
-----------
-.. autofunction:: logcombine
+.. module:: sympy.simplify.combsimp
 
+.. autofunction:: combsimp
 
-Square Root Denest
-------------------
 .. module:: sympy.simplify.sqrtdenest
 
-sqrtdenest
-^^^^^^^^^^
 .. autofunction:: sqrtdenest
 
-Common Subexpresion Elimination
--------------------------------
 .. module:: sympy.simplify.cse_main
 
-cse
-^^^
 .. autofunction:: cse
 
-Hypergeometric Function Expansion
----------------------------------
+.. autofunction:: sympy.simplify.cse_main::opt_cse
+
+.. autofunction:: sympy.simplify.cse_main::tree_cse
+
 .. module:: sympy.simplify.hyperexpand
 
-hyperexpand
-^^^^^^^^^^^
 .. autofunction:: hyperexpand
 
-Traversal Tools
----------------
-.. module:: sympy.simplify.traversaltools
-
-use
-^^^
-.. autofunction:: use
-
-EPath Tools
------------
 .. module:: sympy.simplify.epathtools
 
-EPath class
-^^^^^^^^^^^
 .. autoclass:: EPath
    :members:
 
-epath
-^^^^^
 .. autofunction:: epath

@@ -1,36 +1,10 @@
 """Inference in propositional logic"""
-from __future__ import print_function, division
+from __future__ import annotations
 
-from sympy.logic.boolalg import And, Or, Not, Implies, Equivalent, \
-    conjuncts, to_cnf
-from sympy.core.basic import C
+from sympy.logic.boolalg import And, Not, conjuncts, to_cnf, BooleanFunction
+from sympy.core.sorting import ordered
 from sympy.core.sympify import sympify
-
-
-def is_literal(expr):
-    """
-    Returns True if expr is a literal, else False.
-
-    Examples
-    ========
-
-    >>> from sympy import Symbol, Or
-    >>> from sympy.abc import A, B
-    >>> from sympy.logic.inference import is_literal
-    >>> is_literal(A)
-    True
-    >>> is_literal(~A)
-    True
-    >>> is_literal(Or(A, B))
-    False
-
-    """
-
-    try:
-        literal_symbol(expr)
-        return True
-    except (ValueError):
-        return False
+from sympy.external.importtools import import_module
 
 
 def literal_symbol(literal):
@@ -40,7 +14,6 @@ def literal_symbol(literal):
     Examples
     ========
 
-    >>> from sympy import Symbol
     >>> from sympy.abc import A
     >>> from sympy.logic.inference import literal_symbol
     >>> literal_symbol(A)
@@ -50,25 +23,26 @@ def literal_symbol(literal):
 
     """
 
-    if literal is True or literal is False:
+    if literal is True or literal is False or literal.is_Symbol:
         return literal
-    try:
-        if literal.is_Symbol:
-            return literal
-        if literal.is_Not:
-            return literal_symbol(literal.args[0])
-        else:
-            raise ValueError
-    except (AttributeError, ValueError):
+    elif literal.is_Not:
+        return literal_symbol(literal.args[0])
+    else:
         raise ValueError("Argument must be a boolean literal.")
 
 
-def satisfiable(expr, algorithm="dpll2"):
+def satisfiable(expr, algorithm=None, all_models=False, minimal=False, use_lra_theory=False):
     """
     Check satisfiability of a propositional sentence.
-    Returns a model when it succeeds
+    Returns a model when it succeeds.
+    Returns {true: true} for trivially true expressions.
 
-    Examples:
+    On setting all_models to True, if given expr is satisfiable then
+    returns a generator of models. However, if expr is unsatisfiable
+    then returns a generator containing the single element False.
+
+    Examples
+    ========
 
     >>> from sympy.abc import A, B
     >>> from sympy.logic.inference import satisfiable
@@ -76,94 +50,208 @@ def satisfiable(expr, algorithm="dpll2"):
     {A: True, B: False}
     >>> satisfiable(A & ~A)
     False
+    >>> satisfiable(True)
+    {True: True}
+    >>> next(satisfiable(A & ~A, all_models=True))
+    False
+    >>> models = satisfiable((A >> B) & B, all_models=True)
+    >>> next(models)
+    {A: False, B: True}
+    >>> next(models)
+    {A: True, B: True}
+    >>> def use_models(models):
+    ...     for model in models:
+    ...         if model:
+    ...             # Do something with the model.
+    ...             print(model)
+    ...         else:
+    ...             # Given expr is unsatisfiable.
+    ...             print("UNSAT")
+    >>> use_models(satisfiable(A >> ~A, all_models=True))
+    {A: False}
+    >>> use_models(satisfiable(A ^ A, all_models=True))
+    UNSAT
 
     """
-    expr = to_cnf(expr)
+    if use_lra_theory:
+        if algorithm is not None and algorithm != "dpll2":
+            raise ValueError(f"Currently only dpll2 can handle using lra theory. {algorithm} is not handled.")
+        algorithm = "dpll2"
+
+    if algorithm is None or algorithm == "pycosat":
+        pycosat = import_module('pycosat')
+        if pycosat is not None:
+            algorithm = "pycosat"
+        else:
+            if algorithm == "pycosat":
+                raise ImportError("pycosat module is not present")
+            # Silently fall back to dpll2 if pycosat
+            # is not installed
+            algorithm = "dpll2"
+
+    if algorithm=="minisat22":
+        pysat = import_module('pysat')
+        if pysat is None:
+            algorithm = "dpll2"
+
+    if algorithm=="z3":
+        z3 = import_module('z3')
+        if z3 is None:
+            algorithm = "dpll2"
+
     if algorithm == "dpll":
         from sympy.logic.algorithms.dpll import dpll_satisfiable
         return dpll_satisfiable(expr)
     elif algorithm == "dpll2":
         from sympy.logic.algorithms.dpll2 import dpll_satisfiable
-        return dpll_satisfiable(expr)
+        return dpll_satisfiable(expr, all_models, use_lra_theory=use_lra_theory)
+    elif algorithm == "pycosat":
+        from sympy.logic.algorithms.pycosat_wrapper import pycosat_satisfiable
+        return pycosat_satisfiable(expr, all_models)
+    elif algorithm == "minisat22":
+        from sympy.logic.algorithms.minisat22_wrapper import minisat22_satisfiable
+        return minisat22_satisfiable(expr, all_models, minimal)
+    elif algorithm == "z3":
+        from sympy.logic.algorithms.z3_wrapper import z3_satisfiable
+        return z3_satisfiable(expr, all_models)
+
     raise NotImplementedError
 
 
-def pl_true(expr, model={}):
+def valid(expr):
     """
-    Return True if the propositional logic expression is true in the model,
-    and False if it is false. If the model does not specify the value for
-    every proposition, this may return None to indicate 'not obvious';
-    this may happen even when the expression is tautological.
+    Check validity of a propositional sentence.
+    A valid propositional sentence is True under every assignment.
 
-    The model is implemented as a dict containing the pair symbol, boolean value.
+    Examples
+    ========
+
+    >>> from sympy.abc import A, B
+    >>> from sympy.logic.inference import valid
+    >>> valid(A | ~A)
+    True
+    >>> valid(A | B)
+    False
+
+    References
+    ==========
+
+    .. [1] https://en.wikipedia.org/wiki/Validity
+
+    """
+    return not satisfiable(Not(expr))
+
+
+def pl_true(expr, model=None, deep=False):
+    """
+    Returns whether the given assignment is a model or not.
+
+    If the assignment does not specify the value for every proposition,
+    this may return None to indicate 'not obvious'.
+
+    Parameters
+    ==========
+
+    model : dict, optional, default: {}
+        Mapping of symbols to boolean values to indicate assignment.
+    deep: boolean, optional, default: False
+        Gives the value of the expression under partial assignments
+        correctly. May still return None to indicate 'not obvious'.
+
 
     Examples
     ========
 
     >>> from sympy.abc import A, B
     >>> from sympy.logic.inference import pl_true
-    >>> pl_true( A & B, {A: True, B : True})
+    >>> pl_true( A & B, {A: True, B: True})
     True
+    >>> pl_true(A & B, {A: False})
+    False
+    >>> pl_true(A & B, {A: True})
+    >>> pl_true(A & B, {A: True}, deep=True)
+    >>> pl_true(A >> (B >> A))
+    >>> pl_true(A >> (B >> A), deep=True)
+    True
+    >>> pl_true(A & ~A)
+    >>> pl_true(A & ~A, deep=True)
+    False
+    >>> pl_true(A & B & (~A | ~B), {A: True})
+    >>> pl_true(A & B & (~A | ~B), {A: True}, deep=True)
+    False
 
     """
 
-    if isinstance(expr, bool):
+    from sympy.core.symbol import Symbol
+
+    boolean = (True, False)
+
+    def _validate(expr):
+        if isinstance(expr, Symbol) or expr in boolean:
+            return True
+        if not isinstance(expr, BooleanFunction):
+            return False
+        return all(_validate(arg) for arg in expr.args)
+
+    if expr in boolean:
         return expr
-
     expr = sympify(expr)
-
-    if expr.is_Symbol:
-        return model.get(expr)
-
-    args = expr.args
-    func = expr.func
-
-    if func is Not:
-        p = pl_true(args[0], model)
-        if p is None:
-            return None
-        else:
-            return not p
-    elif func is Or:
-        result = False
-        for arg in args:
-            p = pl_true(arg, model)
-            if p is True:
+    if not _validate(expr):
+        raise ValueError("%s is not a valid boolean expression" % expr)
+    if not model:
+        model = {}
+    model = {k: v for k, v in model.items() if v in boolean}
+    result = expr.subs(model)
+    if result in boolean:
+        return bool(result)
+    if deep:
+        model = dict.fromkeys(result.atoms(), True)
+        if pl_true(result, model):
+            if valid(result):
                 return True
-            if p is None:
-                result = None
-        return result
-    elif func is And:
-        result = True
-        for arg in args:
-            p = pl_true(arg, model)
-            if p is False:
+        else:
+            if not satisfiable(result):
                 return False
-            if p is None:
-                result = None
-        return result
+    return None
 
-    elif func is Implies:
-        p, q = args
-        return pl_true(Or(Not(p), q), model)
 
-    elif func is Equivalent:
-        p, q = args
-        pt = pl_true(p, model)
-        if pt is None:
-            return None
-        qt = pl_true(q, model)
-        if qt is None:
-            return None
-        return pt == qt
+def entails(expr, formula_set=None):
+    """
+    Check whether the given expr_set entail an expr.
+    If formula_set is empty then it returns the validity of expr.
+
+    Examples
+    ========
+
+    >>> from sympy.abc import A, B, C
+    >>> from sympy.logic.inference import entails
+    >>> entails(A, [A >> B, B >> C])
+    False
+    >>> entails(C, [A >> B, B >> C, A])
+    True
+    >>> entails(A >> B)
+    False
+    >>> entails(A >> (B >> A))
+    True
+
+    References
+    ==========
+
+    .. [1] https://en.wikipedia.org/wiki/Logical_consequence
+
+    """
+    if formula_set:
+        formula_set = list(formula_set)
     else:
-        raise ValueError("Illegal operator in logic expression" + str(expr))
+        formula_set = []
+    formula_set.append(Not(expr))
+    return not satisfiable(And(*formula_set))
 
 
-class KB(object):
+class KB:
     """Base class for all knowledge bases"""
     def __init__(self, sentence=None):
-        self.clauses = []
+        self.clauses_ = set()
         if sentence:
             self.tell(sentence)
 
@@ -175,6 +263,10 @@ class KB(object):
 
     def retract(self, sentence):
         raise NotImplementedError
+
+    @property
+    def clauses(self):
+        return list(ordered(self.clauses_))
 
 
 class PropKB(KB):
@@ -194,15 +286,15 @@ class PropKB(KB):
 
         >>> l.tell(x | y)
         >>> l.clauses
-        [Or(x, y)]
+        [x | y]
 
         >>> l.tell(y)
         >>> l.clauses
-        [Or(x, y), y]
+        [y, x | y]
+
         """
         for c in conjuncts(to_cnf(sentence)):
-            if not c in self.clauses:
-                self.clauses.append(c)
+            self.clauses_.add(c)
 
     def ask(self, query):
         """Checks if the query is true given the set of clauses.
@@ -218,16 +310,9 @@ class PropKB(KB):
         True
         >>> l.ask(y)
         False
+
         """
-        if len(self.clauses) == 0:
-            return False
-        from sympy.logic.algorithms.dpll import dpll
-        query_conjuncts = self.clauses[:]
-        query_conjuncts.extend(conjuncts(to_cnf(query)))
-        s = set()
-        for q in query_conjuncts:
-            s = s.union(q.atoms(C.Symbol))
-        return bool(dpll(query_conjuncts, list(s), {}))
+        return entails(query, self.clauses_)
 
     def retract(self, sentence):
         """Remove the sentence's clauses from the KB
@@ -243,12 +328,12 @@ class PropKB(KB):
 
         >>> l.tell(x | y)
         >>> l.clauses
-        [Or(x, y)]
+        [x | y]
 
         >>> l.retract(x | y)
         >>> l.clauses
         []
+
         """
         for c in conjuncts(to_cnf(sentence)):
-            if c in self.clauses:
-                self.clauses.remove(c)
+            self.clauses_.discard(c)

@@ -1,6 +1,6 @@
+from __future__ import annotations
 from sympy.diffgeom.rn import R2, R2_p, R2_r, R3_r
-from sympy.diffgeom import (intcurve_series, intcurve_diffequ, Differential,
-        WedgeProduct)
+from sympy.diffgeom import intcurve_series, Differential, WedgeProduct
 from sympy.core import symbols, Function, Derivative
 from sympy.simplify import trigsimp, simplify
 from sympy.functions import sqrt, atan2, sin, cos
@@ -70,9 +70,9 @@ def test_functional_diffgeom_ch3():
     series = intcurve_series(circ, t, R2_r.point([1, 0]), coeffs=True)
     series_x, series_y = zip(*series)
     assert all(
-        [term == cos(t).taylor_term(i, t) for i, term in enumerate(series_x)])
+        term == cos(t).taylor_term(i, t) for i, term in enumerate(series_x))
     assert all(
-        [term == sin(t).taylor_term(i, t) for i, term in enumerate(series_y)])
+        term == sin(t).taylor_term(i, t) for i, term in enumerate(series_y))
 
 
 def test_functional_diffgeom_ch4():

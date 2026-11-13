@@ -1,6 +1,7 @@
 .. _evalf-label:
 
-Numerical evaluation
+====================
+Numerical Evaluation
 ====================
 
 Basics
@@ -46,11 +47,10 @@ expression is a polynomial in expanded form, the coefficients are evaluated:
 You can also use the standard Python functions ``float()``, ``complex()`` to
 convert SymPy expressions to regular Python numbers:
 
-    >>> float(pi)
-    3.1415926535...
-    >>> complex(pi+E*I)
-    (3.1415926535...+2.7182818284...j)
-
+    >>> float(pi)  # doctest: +SKIP
+    3.141592653589793
+    >>> complex(pi+E*I)  # doctest: +SKIP
+    (3.141592653589793+2.718281828459045j)
 
 If these functions are used, failure to evaluate the expression to an explicit
 number (for example if the expression contains symbols) will raise an exception.
@@ -69,7 +69,7 @@ This shows digits 999,951 through 1,000,000 of pi:
 
 
 High-precision calculations can be slow. It is recommended (but entirely
-optional) to install gmpy (http://code.google.com/p/gmpy/), which will
+optional) to install gmpy (https://github.com/aleaxit/gmpy), which will
 significantly speed up computations such as the one above.
 
 Floating-point numbers
@@ -89,7 +89,7 @@ can be created with a custom precision as second argument:
 
 As the last example shows, some Python floats are only accurate to about 15
 digits as inputs, while others (those that have a denominator that is a
-power of 2, like .125 = 1/4) are exact. To create a ``Float`` from a
+power of 2, like 0.125 = 1/8) are exact. To create a ``Float`` from a
 high-precision decimal number, it is better to pass a string, ``Rational``,
 or ``evalf`` a ``Rational``:
 
@@ -161,7 +161,9 @@ Fibonacci number, the following happens:
 
 
 The lack of digits in the returned number indicates that ``N`` failed to achieve
-full accuracy. The result indicates that the magnitude of the expression is something less than 10^84, but that is not a particularly good answer. To force a higher working precision, the ``maxn`` keyword argument can be used:
+full accuracy. The result indicates that the magnitude of the expression is something
+less than 10^84, but that is not a particularly good answer. To force a higher working
+precision, the ``maxn`` keyword argument can be used:
 
     >>> N(fibonacci(1000) - (GoldenRatio)**1000/sqrt(5), maxn=500)
     -4.60123853010113e-210
@@ -284,7 +286,7 @@ Oscillatory quadrature requires an integrand containing a factor cos(ax+b) or
 sin(ax+b). Note that many other oscillatory integrals can be transformed to
 this form with a change of variables:
 
-    >>> init_printing(use_unicode=False, wrap_line=False, no_global=True)
+    >>> init_printing(use_unicode=False)
     >>> intgrl = Integral(sin(1/x), (x, 0, 1)).transform(x, 1/x)
     >>> intgrl
      oo
@@ -340,7 +342,7 @@ digits in a fraction of a second with a simple command:
     >>> f = factorial
     >>> n = Symbol('n', integer=True)
     >>> R = 9801/sqrt(8)/Sum(f(4*n)*(1103+26390*n)/f(n)**4/396**(4*n),
-    ...                         (n, 0, oo)) #doctest: +SKIP
+    ...                         (n, 0, oo))
     >>> N(R, 10000) #doctest: +SKIP
     3.141592653589793238462643383279502884197169399375105820974944592307816406286208
     99862803482534211706798214808651328230664709384460955058223172535940812848111745
@@ -388,16 +390,16 @@ Here are several more advanced examples:
     >>> nsimplify(Float('0.130198866629986772369127970337',30), [pi, E])
         1
     ----------
-    5*pi
-    ---- + 2*E
-     7
+          5*pi
+    2*e + ----
+           7
     >>> nsimplify(cos(atan('1/3')))
         ____
     3*\/ 10
     --------
        10
     >>> nsimplify(4/(1+sqrt(5)), [GoldenRatio])
-    -2 + 2*GoldenRatio
+    2*GoldenRatio - 2
     >>> nsimplify(2 + exp(2*atan('1/4')*I))
     49   8*I
     -- + ---
@@ -407,7 +409,7 @@ Here are several more advanced examples:
               /   ___
     1        /  \/ 5    1
     - - I*  /   ----- + -
-    2     \/      10    4
+    2     \/     10     4
     >>> nsimplify(I**I, [pi])
      -pi
      ----
@@ -422,6 +424,3 @@ Here are several more advanced examples:
     >>> nsimplify(gamma('1/4')*gamma('3/4'), [pi])
       ___
     \/ 2 *pi
-
-
-

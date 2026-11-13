@@ -1,9 +1,9 @@
-from __future__ import print_function, division
-
-from sympy.core import Mul
+from __future__ import annotations
+from sympy.core.mul import Mul
+from sympy.core.singleton import S
+from sympy.core.sorting import default_sort_key
 from sympy.functions import DiracDelta, Heaviside
-from sympy.solvers import solve
-from sympy.core.compatibility import default_sort_key
+from .integrals import Integral, integrate
 
 
 def change_mul(node, x):
@@ -12,8 +12,11 @@ def change_mul(node, x):
        Rearranges the operands of a product, bringing to front any simple
        DiracDelta expression.
 
+       Explanation
+       ===========
+
        If no simple DiracDelta expression was found, then all the DiracDelta
-       expressions are simplified (using DiracDelta.simplify).
+       expressions are simplified (using DiracDelta.expand(diracdelta=True, wrt=x)).
 
        Return: (dirac, new node)
        Where:
@@ -41,8 +44,6 @@ def change_mul(node, x):
        sympy.functions.special.delta_functions.DiracDelta
        deltaintegrate
     """
-    if not (node.is_Mul or node.is_Pow):
-        return node
 
     new_args = []
     dirac = None
@@ -54,23 +55,22 @@ def change_mul(node, x):
     sorted_args.extend(nc)
 
     for arg in sorted_args:
-        if arg.is_Pow and arg.base.func is DiracDelta:
+        if arg.is_Pow and isinstance(arg.base, DiracDelta):
             new_args.append(arg.func(arg.base, arg.exp - 1))
             arg = arg.base
-        if dirac is None and (arg.func is DiracDelta and arg.is_simple(x)
-                and (len(arg.args) <= 1 or arg.args[1] == 0)):
+        if dirac is None and (isinstance(arg, DiracDelta) and arg.is_simple(x)):
             dirac = arg
         else:
             new_args.append(arg)
     if not dirac:  # there was no simple dirac
         new_args = []
         for arg in sorted_args:
-            if arg.func is DiracDelta:
-                new_args.append(arg.simplify(x))
-            elif arg.is_Pow and arg.base.func is DiracDelta:
-                new_args.append(arg.func(arg.base.simplify(x), arg.exp))
+            if isinstance(arg, DiracDelta):
+                new_args.append(arg.expand(diracdelta=True, wrt=x))
+            elif arg.is_Pow and isinstance(arg.base, DiracDelta):
+                new_args.append(arg.func(arg.base.expand(diracdelta=True, wrt=x), arg.exp))
             else:
-                new_args.append(change_mul(arg, x))
+                new_args.append(arg)
         if new_args != sorted_args:
             nnode = Mul(*new_args).expand()
         else:  # if the node didn't change there is nothing to do
@@ -82,6 +82,9 @@ def change_mul(node, x):
 def deltaintegrate(f, x):
     """
     deltaintegrate(f, x)
+
+    Explanation
+    ===========
 
     The idea for integration is the following:
 
@@ -105,7 +108,7 @@ def deltaintegrate(f, x):
 
       First we expand it.
 
-      If the expansion did work, the we try to integrate the expansion.
+      If the expansion did work, then we try to integrate the expansion.
 
       If not, we try to extract a simple DiracDelta term, then we have two
       cases:
@@ -120,7 +123,7 @@ def deltaintegrate(f, x):
 
         >>> from sympy.abc import x, y, z
         >>> from sympy.integrals.deltafunctions import deltaintegrate
-        >>> from sympy import sin, cos, DiracDelta, Heaviside
+        >>> from sympy import sin, cos, DiracDelta
         >>> deltaintegrate(x*sin(x)*cos(x)*DiracDelta(x - 1), x)
         sin(1)*cos(1)*Heaviside(x - 1)
         >>> deltaintegrate(y**2*DiracDelta(x - z)*DiracDelta(y - z), y)
@@ -135,11 +138,9 @@ def deltaintegrate(f, x):
     if not f.has(DiracDelta):
         return None
 
-    from sympy.integrals import Integral, integrate
-
     # g(x) = DiracDelta(h(x))
     if f.func == DiracDelta:
-        h = f.simplify(x)
+        h = f.expand(diracdelta=True, wrt=x)
         if h == f:  # can't simplify the expression
             #FIXME: the second term tells whether is DeltaDirac or Derivative
             #For integrating derivatives of DiracDelta we need the chain rule
@@ -160,17 +161,42 @@ def deltaintegrate(f, x):
                 return fh
         else:
             # no expansion performed, try to extract a simple DiracDelta term
-            dg, rest_mult = change_mul(f, x)
+            deltaterm, rest_mult = change_mul(f, x)
 
-            if not dg:
+            if not deltaterm:
                 if rest_mult:
                     fh = integrate(rest_mult, x)
                     return fh
             else:
-                dg = dg.simplify(x)
-                if dg.is_Mul:  # Take out any extracted factors
-                    dg, rest_mult_2 = change_mul(dg, x)
+                from sympy.solvers import solve
+                deltaterm = deltaterm.expand(diracdelta=True, wrt=x)
+                if deltaterm.is_Mul:  # Take out any extracted factors
+                    deltaterm, rest_mult_2 = change_mul(deltaterm, x)
                     rest_mult = rest_mult*rest_mult_2
-                point = solve(dg.args[0], x)[0]
-                return (rest_mult.subs(x, point)*Heaviside(x - point))
+                point = solve(deltaterm.args[0], x)[0]
+
+                # Return the largest hyperreal term left after
+                # repeated integration by parts.  For example,
+                #
+                #   integrate(y*DiracDelta(x, 1),x) == y*DiracDelta(x,0),  not 0
+                #
+                # This is so Integral(y*DiracDelta(x).diff(x),x).doit()
+                # will return y*DiracDelta(x) instead of 0 or DiracDelta(x),
+                # both of which are correct everywhere the value is defined
+                # but give wrong answers for nested integration.
+                n = (0 if len(deltaterm.args)==1 else deltaterm.args[1])
+                m = 0
+                while n >= 0:
+                    r = S.NegativeOne**n*rest_mult.diff(x, n).subs(x, point)
+                    if r.is_zero:
+                        n -= 1
+                        m += 1
+                    else:
+                        if m == 0:
+                            return r*Heaviside(x - point)
+                        else:
+                            return r*DiracDelta(x,m-1)
+                # In some very weak sense, x=0 is still a singularity,
+                # but we hope will not be of any practical consequence.
+                return S.Zero
     return None

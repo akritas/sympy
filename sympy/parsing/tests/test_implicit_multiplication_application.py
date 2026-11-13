@@ -1,3 +1,5 @@
+from __future__ import annotations
+import sympy
 from sympy.parsing.sympy_parser import (
     parse_expr,
     standard_transformations,
@@ -10,7 +12,7 @@ from sympy.parsing.sympy_parser import (
     split_symbols_custom,
     _token_splittable
 )
-from sympy.utilities.pytest import raises
+from sympy.testing.pytest import raises
 
 
 def test_implicit_multiplication():
@@ -20,7 +22,15 @@ def test_implicit_multiplication():
         '3sin(x)': '3*sin(x)',
         '(x+1)(x+2)': '(x+1)*(x+2)',
         '(5 x**2)sin(x)': '(5*x**2)*sin(x)',
-        '2 sin(x) cos(x)': '2*sin(x)*cos(x)'
+        '2 sin(x) cos(x)': '2*sin(x)*cos(x)',
+        'pi x': 'pi*x',
+        'x pi': 'x*pi',
+        'E x': 'E*x',
+        'EulerGamma y': 'EulerGamma*y',
+        'E pi': 'E*pi',
+        'pi (x + 2)': 'pi*(x+2)',
+        '(x + 2) pi': '(x+2)*pi',
+        'pi sin(x)': 'pi*sin(x)',
     }
     transformations = standard_transformations + (convert_xor,)
     transformations2 = transformations + (split_symbols,
@@ -52,7 +62,7 @@ def test_implicit_application():
     for case in cases:
         implicit = parse_expr(case, transformations=transformations2)
         normal = parse_expr(cases[case], transformations=transformations)
-        assert(implicit == normal)
+        assert(implicit == normal), (implicit, normal)
 
     multiplication = ['x y', 'x sin x', '2x']
     for case in multiplication:
@@ -60,7 +70,6 @@ def test_implicit_application():
                lambda: parse_expr(case, transformations=transformations2))
     raises(TypeError,
            lambda: parse_expr('sin**2(x)', transformations=transformations2))
-
 
 
 def test_function_exponentiation():
@@ -82,6 +91,9 @@ def test_function_exponentiation():
         raises(SyntaxError,
                lambda: parse_expr(case, transformations=transformations2))
 
+    assert parse_expr('x**2', local_dict={ 'x': sympy.Symbol('x') },
+                      transformations=transformations2) == parse_expr('x**2')
+
 
 def test_symbol_splitting():
     # By default Greek letter names should not be split (lambda is a keyword
@@ -95,6 +107,19 @@ def test_symbol_splitting():
     for letter in greek_letters:
         assert(parse_expr(letter, transformations=transformations) ==
                parse_expr(letter))
+
+    # Make sure symbol splitting resolves names
+    transformations += (implicit_multiplication,)
+    local_dict = { 'e': sympy.E }
+    cases = {
+        'xe': 'E*x',
+        'Iy': 'I*y',
+        'ee': 'E*E',
+    }
+    for case, expected in cases.items():
+        assert(parse_expr(case, local_dict=local_dict,
+                          transformations=transformations) ==
+               parse_expr(expected))
 
     # Make sure custom splitting works
     def can_split(symbol):
@@ -139,7 +164,6 @@ def test_all_implicit_steps():
         'pi': 'pi',  # don't mess with constants
         'None': 'None',
         'ln sin x': 'ln(sin(x))',  # multiple implicit function applications
-        'factorial': 'factorial',  # don't add parentheses
         'sin x**2': 'sin(x**2)',  # implicit application to an exponential
         'alpha': 'Symbol("alpha")',  # don't split Greek letters/subscripts
         'x_2': 'Symbol("x_2")',
@@ -149,7 +173,8 @@ def test_all_implicit_steps():
         'tan 3x': 'tan(3*x)',
         'sin^2(3*E^(x))': 'sin(3*E**(x))**2',
         'sin**2(E^(3x))': 'sin(E**(3*x))**2',
-        'sin^2 (3x*E^(x))': 'sin(3*x*E^x)**2'
+        'sin^2 (3x*E^(x))': 'sin(3*x*E^x)**2',
+        'pi sin x': 'pi*sin(x)',
     }
     transformations = standard_transformations + (convert_xor,)
     transformations2 = transformations + (implicit_multiplication_application,)
@@ -157,3 +182,15 @@ def test_all_implicit_steps():
         implicit = parse_expr(case, transformations=transformations2)
         normal = parse_expr(cases[case], transformations=transformations)
         assert(implicit == normal)
+
+
+def test_no_methods_implicit_multiplication():
+    # Issue 21020
+    u = sympy.Symbol('u')
+    transformations = standard_transformations + \
+                      (implicit_multiplication,)
+    expr = parse_expr('x.is_polynomial(x)', transformations=transformations)
+    assert expr == True
+    expr = parse_expr('(exp(x) / (1 + exp(2x))).subs(exp(x), u)',
+                      transformations=transformations)
+    assert expr == u/(u**2 + 1)

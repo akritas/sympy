@@ -1,14 +1,18 @@
-from __future__ import print_function, division
+from __future__ import annotations
+from sympy import Symbol, S
+from sympy.physics.vector import ReferenceFrame, Dyadic, Point, dot
+from sympy.physics.mechanics.body_base import BodyBase
+from sympy.physics.mechanics.inertia import inertia_of_point_mass, Inertia
+from sympy.utilities.exceptions import sympy_deprecation_warning
 
 __all__ = ['RigidBody']
 
-from sympy import sympify
-from sympy.physics.mechanics.point import Point
-from sympy.physics.mechanics.essential import ReferenceFrame, Dyadic
 
-
-class RigidBody(object):
+class RigidBody(BodyBase):
     """An idealized rigid body.
+
+    Explanation
+    ===========
 
     This is essentially a container which holds the various components which
     describe a rigid body: a name, mass, center of mass, reference frame, and
@@ -19,6 +23,7 @@ class RigidBody(object):
 
     Attributes
     ==========
+
     name : string
         The body's name.
     masscenter : Point
@@ -29,6 +34,8 @@ class RigidBody(object):
         The body's mass.
     inertia : (Dyadic, Point)
         The body's inertia about a point; stored in a tuple as shown above.
+    potential_energy : Sympifyable
+        The potential energy of the RigidBody.
 
     Examples
     ========
@@ -48,85 +55,98 @@ class RigidBody(object):
 
     """
 
-    def __init__(self, name, masscenter, frame, mass, inertia):
-        if not isinstance(name, str):
-            raise TypeError('Supply a valid name.')
-        self._name = name
-        self.set_masscenter(masscenter)
-        self.set_mass(mass)
-        self.set_frame(frame)
-        self.set_inertia(inertia)
-        self._pe = sympify(0)
+    def __init__(self, name, masscenter=None, frame=None, mass=None,
+                 inertia=None):
+        super().__init__(name, masscenter, mass)
+        if frame is None:
+            frame = ReferenceFrame(f'{name}_frame')
+        self.frame = frame
+        if inertia is None:
+            ixx = Symbol(f'{name}_ixx')
+            iyy = Symbol(f'{name}_iyy')
+            izz = Symbol(f'{name}_izz')
+            izx = Symbol(f'{name}_izx')
+            ixy = Symbol(f'{name}_ixy')
+            iyz = Symbol(f'{name}_iyz')
+            inertia = Inertia.from_inertia_scalars(self.masscenter, self.frame,
+                                                   ixx, iyy, izz, ixy, iyz, izx)
+        self.inertia = inertia
 
-    def __str__(self):
-        return self._name
+    def __repr__(self):
+        return (f'{self.__class__.__name__}({repr(self.name)}, masscenter='
+                f'{repr(self.masscenter)}, frame={repr(self.frame)}, mass='
+                f'{repr(self.mass)}, inertia={repr(self.inertia)})')
 
-    __repr__ = __str__
-
-    def get_frame(self):
+    @property
+    def frame(self):
+        """The ReferenceFrame fixed to the body."""
         return self._frame
 
-    def set_frame(self, F):
+    @frame.setter
+    def frame(self, F):
         if not isinstance(F, ReferenceFrame):
-            raise TypeError("RigdBody frame must be a ReferenceFrame object.")
+            raise TypeError("RigidBody frame must be a ReferenceFrame object.")
         self._frame = F
 
-    frame = property(get_frame, set_frame)
+    @property
+    def x(self):
+        """The basis Vector for the body, in the x direction. """
+        return self.frame.x
 
-    def get_masscenter(self):
-        return self._masscenter
+    @property
+    def y(self):
+        """The basis Vector for the body, in the y direction. """
+        return self.frame.y
 
-    def set_masscenter(self, p):
-        if not isinstance(p, Point):
-            raise TypeError("RigidBody center of mass must be a Point object.")
-        self._masscenter = p
+    @property
+    def z(self):
+        """The basis Vector for the body, in the z direction. """
+        return self.frame.z
 
-    masscenter = property(get_masscenter, set_masscenter)
+    @property
+    def inertia(self):
+        """The body's inertia about a point; stored as (Dyadic, Point)."""
+        return self._inertia
 
-    def get_mass(self):
-        return self._mass
+    @inertia.setter
+    def inertia(self, I):
+        # check if I is of the form (Dyadic, Point)
+        if len(I) != 2 or not isinstance(I[0], Dyadic) or not isinstance(I[1], Point):
+            raise TypeError("RigidBody inertia must be a tuple of the form (Dyadic, Point).")
 
-    def set_mass(self, m):
-        self._mass = sympify(m)
-
-    mass = property(get_mass, set_mass)
-
-    def get_inertia(self):
-        return (self._inertia, self._inertia_point)
-
-    def set_inertia(self, I):
-        if not isinstance(I[0], Dyadic):
-            raise TypeError("RigidBody inertia must be a Dyadic object.")
-        if not isinstance(I[1], Point):
-            raise TypeError("RigidBody inertia must be about a Point.")
-        self._inertia = I[0]
-        self._inertia_point = I[1]
+        self._inertia = Inertia(I[0], I[1])
         # have I S/O, want I S/S*
         # I S/O = I S/S* + I S*/O; I S/S* = I S/O - I S*/O
         # I_S/S* = I_S/O - I_S*/O
-        from sympy.physics.mechanics.functions import inertia_of_point_mass
         I_Ss_O = inertia_of_point_mass(self.mass,
                                        self.masscenter.pos_from(I[1]),
                                        self.frame)
         self._central_inertia = I[0] - I_Ss_O
-
-    inertia = property(get_inertia, set_inertia)
 
     @property
     def central_inertia(self):
         """The body's central inertia dyadic."""
         return self._central_inertia
 
+    @central_inertia.setter
+    def central_inertia(self, I):
+        if not isinstance(I, Dyadic):
+            raise TypeError("RigidBody inertia must be a Dyadic object.")
+        self.inertia = Inertia(I, self.masscenter)
+
     def linear_momentum(self, frame):
         """ Linear momentum of the rigid body.
 
+        Explanation
+        ===========
+
         The linear momentum L, of a rigid body B, with respect to frame N is
-        given by
+        given by:
 
-        L = M * v*
+        ``L = m * v``
 
-        where M is the mass of the rigid body and v* is the velocity of
-        the mass center of B in the frame, N.
+        where m is the mass of the rigid body, and v is the velocity of the mass
+        center of B in the frame N.
 
         Parameters
         ==========
@@ -139,39 +159,44 @@ class RigidBody(object):
 
         >>> from sympy.physics.mechanics import Point, ReferenceFrame, outer
         >>> from sympy.physics.mechanics import RigidBody, dynamicsymbols
-        >>> M, v = dynamicsymbols('M v')
+        >>> from sympy.physics.vector import init_vprinting
+        >>> init_vprinting(pretty_print=False)
+        >>> m, v = dynamicsymbols('m v')
         >>> N = ReferenceFrame('N')
         >>> P = Point('P')
         >>> P.set_vel(N, v * N.x)
         >>> I = outer (N.x, N.x)
         >>> Inertia_tuple = (I, P)
-        >>> B = RigidBody('B', P, N, M, Inertia_tuple)
+        >>> B = RigidBody('B', P, N, m, Inertia_tuple)
         >>> B.linear_momentum(N)
-        M*v*N.x
+        m*v*N.x
 
         """
 
         return self.mass * self.masscenter.vel(frame)
 
     def angular_momentum(self, point, frame):
-        """ Angular momentum of the rigid body.
+        """Returns the angular momentum of the rigid body about a point in the
+        given frame.
 
-        The angular momentum H, about some point O, of a rigid body B, in a
-        frame N is given by
+        Explanation
+        ===========
 
-        H = I* . omega + r* x (M * v)
+        The angular momentum H of a rigid body B about some point O in a frame N
+        is given by:
 
-        where I* is the central inertia dyadic of B, omega is the angular
-        velocity of body B in the frame, N, r* is the position vector from
-        point O to the mass center of B, and v is the velocity of point O in
-        the frame, N.
+        ``H = dot(I, w) + cross(r, m * v)``
+
+        where I and m are the central inertia dyadic and mass of rigid body B, w
+        is the angular velocity of body B in the frame N, r is the position
+        vector from point O to the mass center of B, and v is the velocity of
+        the mass center in the frame N.
 
         Parameters
         ==========
 
         point : Point
             The point about which angular momentum is desired.
-
         frame : ReferenceFrame
             The frame in which angular momentum is desired.
 
@@ -180,34 +205,41 @@ class RigidBody(object):
 
         >>> from sympy.physics.mechanics import Point, ReferenceFrame, outer
         >>> from sympy.physics.mechanics import RigidBody, dynamicsymbols
-        >>> M, v, r, omega = dynamicsymbols('M v r omega')
+        >>> from sympy.physics.vector import init_vprinting
+        >>> init_vprinting(pretty_print=False)
+        >>> m, v, r, omega = dynamicsymbols('m v r omega')
         >>> N = ReferenceFrame('N')
         >>> b = ReferenceFrame('b')
         >>> b.set_ang_vel(N, omega * b.x)
         >>> P = Point('P')
         >>> P.set_vel(N, 1 * N.x)
-        >>> I = outer (b.x, b.x)
-        >>> Inertia_tuple = (I, P)
-        >>> B = RigidBody('B', P, b, M, Inertia_tuple)
+        >>> I = outer(b.x, b.x)
+        >>> B = RigidBody('B', P, b, m, (I, P))
         >>> B.angular_momentum(P, N)
         omega*b.x
 
         """
+        I = self.central_inertia
+        w = self.frame.ang_vel_in(frame)
+        m = self.mass
+        r = self.masscenter.pos_from(point)
+        v = self.masscenter.vel(frame)
 
-        return ((self.central_inertia & self.frame.ang_vel_in(frame)) +
-                (point.vel(frame) ^ -self.masscenter.pos_from(point)) *
-                self.mass)
+        return I.dot(w) + r.cross(m * v)
 
     def kinetic_energy(self, frame):
-        """Kinetic energy of the rigid body
+        """Kinetic energy of the rigid body.
 
-        The kinetic energy, T, of a rigid body, B, is given by
+        Explanation
+        ===========
 
-        'T = 1/2 (I omega^2 + m v^2)'
+        The kinetic energy, T, of a rigid body, B, is given by:
 
-        where I and m are the central inertia dyadic and mass of rigid body B,
-        respectively, omega is the body's angular velocity and v is the
-        velocity of the body's mass center in the supplied ReferenceFrame.
+        ``T = 1/2 * (dot(dot(I, w), w) + dot(m * v, v))``
+
+        where I and m are the central inertia dyadic and mass of rigid body B
+        respectively, w is the body's angular velocity, and v is the velocity of
+        the body's mass center in the supplied ReferenceFrame.
 
         Parameters
         ==========
@@ -215,7 +247,8 @@ class RigidBody(object):
         frame : ReferenceFrame
             The RigidBody's angular velocity and the velocity of it's mass
             center are typically defined with respect to an inertial frame but
-            any relevant frame in which the velocities are known can be supplied.
+            any relevant frame in which the velocities are known can be
+            supplied.
 
         Examples
         ========
@@ -223,7 +256,7 @@ class RigidBody(object):
         >>> from sympy.physics.mechanics import Point, ReferenceFrame, outer
         >>> from sympy.physics.mechanics import RigidBody
         >>> from sympy import symbols
-        >>> M, v, r, omega = symbols('M v r omega')
+        >>> m, v, r, omega = symbols('m v r omega')
         >>> N = ReferenceFrame('N')
         >>> b = ReferenceFrame('b')
         >>> b.set_ang_vel(N, omega * b.x)
@@ -231,66 +264,52 @@ class RigidBody(object):
         >>> P.set_vel(N, v * N.x)
         >>> I = outer (b.x, b.x)
         >>> inertia_tuple = (I, P)
-        >>> B = RigidBody('B', P, b, M, inertia_tuple)
+        >>> B = RigidBody('B', P, b, m, inertia_tuple)
         >>> B.kinetic_energy(N)
-        M*v**2/2 + omega**2/2
+        m*v**2/2 + omega**2/2
 
         """
 
-        rotational_KE = (self.frame.ang_vel_in(frame) & (self.central_inertia &
-                self.frame.ang_vel_in(frame)) / sympify(2))
-
-        translational_KE = (self.mass * (self.masscenter.vel(frame) &
-            self.masscenter.vel(frame)) / sympify(2))
-
+        rotational_KE = S.Half * dot(
+            self.frame.ang_vel_in(frame),
+            dot(self.central_inertia, self.frame.ang_vel_in(frame)))
+        translational_KE = S.Half * self.mass * dot(self.masscenter.vel(frame),
+                                                    self.masscenter.vel(frame))
         return rotational_KE + translational_KE
 
     def set_potential_energy(self, scalar):
-        """Used to set the potential energy of this RigidBody.
+        sympy_deprecation_warning(
+            """
+The sympy.physics.mechanics.RigidBody.set_potential_energy()
+method is deprecated. Instead use
+
+    B.potential_energy = scalar
+            """,
+        deprecated_since_version="1.5",
+        active_deprecations_target="deprecated-set-potential-energy",
+        )
+        self.potential_energy = scalar
+
+    def parallel_axis(self, point, frame=None):
+        """Returns the inertia dyadic of the body with respect to another point.
 
         Parameters
         ==========
 
-        scalar: Sympifyable
-            The potential energy (a scalar) of the RigidBody.
+        point : sympy.physics.vector.Point
+            The point to express the inertia dyadic about.
+        frame : sympy.physics.vector.ReferenceFrame
+            The reference frame used to construct the dyadic.
 
-        Examples
-        ========
+        Returns
+        =======
 
-        >>> from sympy.physics.mechanics import Particle, Point, outer
-        >>> from sympy.physics.mechanics import RigidBody, ReferenceFrame
-        >>> from sympy import symbols
-        >>> b = ReferenceFrame('b')
-        >>> M, g, h = symbols('M g h')
-        >>> P = Point('P')
-        >>> I = outer (b.x, b.x)
-        >>> Inertia_tuple = (I, P)
-        >>> B = RigidBody('B', P, b, M, Inertia_tuple)
-        >>> B.set_potential_energy(M * g * h)
+        inertia : sympy.physics.vector.Dyadic
+            The inertia dyadic of the rigid body expressed about the provided
+            point.
 
         """
-
-        self._pe = sympify(scalar)
-
-    @property
-    def potential_energy(self):
-        """The potential energy of the RigidBody.
-
-        Examples
-        ========
-
-        >>> from sympy.physics.mechanics import RigidBody, Point, outer, ReferenceFrame
-        >>> from sympy import symbols
-        >>> M, g, h = symbols('M g h')
-        >>> b = ReferenceFrame('b')
-        >>> P = Point('P')
-        >>> I = outer (b.x, b.x)
-        >>> Inertia_tuple = (I, P)
-        >>> B = RigidBody('B', P, b, M, Inertia_tuple)
-        >>> B.set_potential_energy(M * g * h)
-        >>> B.potential_energy
-        M*g*h
-
-        """
-
-        return self._pe
+        if frame is None:
+            frame = self.frame
+        return self.central_inertia + inertia_of_point_mass(
+            self.mass, self.masscenter.pos_from(point), frame)

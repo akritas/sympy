@@ -1,7 +1,6 @@
-from __future__ import division
+from __future__ import annotations
 from sympy.plotting.intervalmath import interval
-from sympy.utilities.pytest import raises
-from sympy.external import import_module
+from sympy.testing.pytest import raises
 
 
 def test_interval():
@@ -91,6 +90,12 @@ def test_interval_inequality():
     assert (interval(5, 8) > interval(2, 3)) == (True, True)
     assert (interval(2, 5) > interval(1, 3)) == (None, True)
     assert (interval(2, 3) > interval(3.1, 5)) == (False, True)
+
+    assert (interval(-1, 1) == 0) == (None, True)
+    assert (interval(-1, 1) == 2) == (False, True)
+    assert (interval(-1, 1) != 0) == (None, True)
+    assert (interval(-1, 1) != 2) == (True, True)
+
     assert (interval(3, 5) > 2) == (True, True)
     assert (interval(3, 5) < 2) == (False, True)
     assert (interval(1, 5) < 2) == (None, True)
@@ -200,7 +205,7 @@ def test_hashable():
     appears to be necessary for plotting in py3k. For details, see:
 
     https://github.com/sympy/sympy/pull/2101
-    https://code.google.com/p/sympy/issues/detail?id=3434
+    https://github.com/sympy/sympy/issues/6533
     '''
     hash(interval(1, 1))
     hash(interval(1, 1, is_valid=True))

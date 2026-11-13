@@ -1,41 +1,194 @@
-from __future__ import print_function, division
+from __future__ import annotations
+from sympy import zeros, Matrix, diff, eye, linear_eq_to_matrix
+from sympy.core.sorting import default_sort_key
+from sympy.physics.vector import (ReferenceFrame, dynamicsymbols,
+                                  partial_velocity)
+from sympy.physics.mechanics.method import MethodBase
+from sympy.physics.mechanics.particle import Particle
+from sympy.physics.mechanics.rigidbody import RigidBody
+from sympy.physics.mechanics.functions import (msubs, find_dynamicsymbols,
+                                               _f_list_parser,
+                                               _validate_coordinates,
+                                               _parse_linear_solver)
+from sympy.physics.mechanics.linearize import Linearizer
+from sympy.utilities.iterables import iterable
+from sympy.utilities.exceptions import sympy_deprecation_warning
+from sympy.matrices.exceptions import NonInvertibleMatrixError
+
 
 __all__ = ['KanesMethod']
 
-from sympy import Symbol, zeros, Matrix, diff, solve_linear_system_LU, eye
-from sympy.core.compatibility import reduce
-from sympy.utilities import default_sort_key
-from sympy.physics.mechanics.essential import ReferenceFrame, dynamicsymbols
-from sympy.physics.mechanics.particle import Particle
-from sympy.physics.mechanics.point import Point
-from sympy.physics.mechanics.rigidbody import RigidBody
-from sympy.physics.mechanics.functions import (inertia_of_point_mass,
-                                               partial_velocity)
 
-class KanesMethod(object):
-    """Kane's method object.
+class KanesMethod(MethodBase):
+    r"""Kane's method for forming the equations of motion of a multibody
+    system.
 
-    This object is used to do the "book-keeping" as you go through and form
-    equations of motion in the way Kane presents in:
-    Kane, T., Levinson, D. Dynamics Theory and Applications. 1985 McGraw-Hill
+    Explanation
+    ===========
 
-    The attributes are for equations in the form [M] udot = forcing.
+    This class is used to do the bookkeeping as you form equations of motion in
+    method presented in [1]_.
+
+    Kane's dynamical differential equations are given as:
+
+    .. math::
+
+       F_r + F_r^* = 0
+
+    For :math:`r = 1, ..., p` of :math:`p` independent generalized speeds.
+
+    These can be expressed in a matrix for with the linear mass matrix exposed:
+
+    .. math::
+
+       \mathbf{M} \dot{\vec{u}} = \mathbf{F}
+
+    Parameters
+    ==========
+
+    frame : ReferenceFrame
+        The inertial reference frame for the system.
+    q_ind : iterable of dynamicsymbols
+        Independent generalized coordinates.
+    u_ind : iterable of dynamicsymbols
+        Independent generalized speeds.
+    kd_eqs : iterable of Expr, optional
+        Kinematic differential equations, which linearly relate the generalized
+        speeds to the time-derivatives of the generalized coordinates.
+    q_dependent : iterable of dynamicsymbols, optional
+        Dependent generalized coordinates.
+    configuration_constraints : iterable of Expr, optional
+        Constraints on the system's configuration, i.e. holonomic constraints.
+    u_dependent : iterable of dynamicsymbols, optional
+        Dependent generalized speeds.
+    velocity_constraints : iterable of Expr, optional
+        Constraints on the system's velocity, i.e. the combination of the
+        nonholonomic constraints and the time-derivative of the holonomic
+        constraints.
+    acceleration_constraints : iterable of Expr, optional
+        Constraints on the system's acceleration, by default these are the
+        time-derivative of the velocity constraints.
+    u_auxiliary : iterable of dynamicsymbols, optional
+        Auxiliary generalized speeds.
+    bodies : iterable of Particle and/or RigidBody, optional
+        The particles and rigid bodies in the system.
+    forcelist : iterable of tuple[Point | ReferenceFrame, Vector], optional
+        Forces and torques applied on the system.
+    explicit_kinematics : bool
+        Boolean whether the mass matrices and forcing vectors should use the
+        explicit form (default) or implicit form for kinematics.
+        See the notes for more details.
+    kd_eqs_solver : str, callable
+        Method used to solve the kinematic differential equations. If a string
+        is supplied, it should be a valid method that can be used with the
+        :meth:`sympy.matrices.matrixbase.MatrixBase.solve`. If a callable is
+        supplied, it should have the format ``f(A, rhs)``, where it solves the
+        equations and returns the solution. The default utilizes LU solve. See
+        the notes for more information.
+    constraint_solver : str, callable
+        Method used to solve the velocity constraints. If a string is
+        supplied, it should be a valid method that can be used with the
+        :meth:`sympy.matrices.matrixbase.MatrixBase.solve`. If a callable is
+        supplied, it should have the format ``f(A, rhs)``, where it solves the
+        equations and returns the solution. The default utilizes LU solve. See
+        the notes for more information.
+    nonholonomic_constraints : iterable of Expr, optional
+        Nonholonomic constraint residuals. Can be supplied instead of
+        ``velocity_constraints``, but not together with. Constraints that are
+        strictly nonholonomic in nature. If provided, ``velocity_constraints``
+        will be ignored and determined automatically.
 
     Attributes
     ==========
 
-    auxiliary : Matrix
+    Specific to Kane's method:
+
+    mass_matrix_kin : Matrix
+        The "mass matrix" for kinematic differential equations: k_kqdot
+    forcing_kin : Matrix
+        The forcing vector for kinematic differential equations: -(k_ku*u + f_k)
+    auxiliary_eqs : Matrix
         If applicable, the set of auxiliary Kane's
         equations used to solve for non-contributing
         forces.
+    bodylist : list
+        List of the particles and rigid bodies in the system. Deprecated: use
+        :py:attr:`~.KanesMethod.bodies` instead.
+    forcelist : list
+        List of the forces and torques acting on the system. Deprecated: use
+        :py:attr:`~.KanesMethod.loads` instead.
+
+    Shared by all methods:
+
+    frame : ReferenceFrame
+        Inertial reference frame that the equations of motion were formulated
+        with respect to.
+    q : Matrix
+        Column matrix of the generalized coordinates.
+    u : Matrix
+        Column matrix of the generalized speeds.
+    holonomic_constraints : Matrix, shape(len(q_dependent), 1)
+        Column matrix of the holonomic constraint residuals.
+    nonholonomic_constraints : Matrix, shape(len(u_dependent), 1)
+        Column matrix of the nonholonomic constraint residuals.
+    velocity_constraints : Matrix, shape(len(q_dependent) + len(u_dependent), 1)
+        Column matrix of the time differentiated holonomic constraint
+        residuals stacked on top of the nonholonomic constraint residuals.
+    acceleration_constraints : Matrix, shape(len(q_dependent) + len(u_dependent), 1)
+        Column matrix of the time differentiated velocity constraints or user
+        supplied.
+    constraints_jacobian : Matrix, shape(len(u_dependent), len(u))
+        Linear coefficient matrix with respect to the generalized speeds is
+        extracted from the velocity constraints.
+    bodies : list
+        List of Particle and RigidBody objects in the system.
+    loads : list
+        List of (Point, vector) or (ReferenceFrame, vector) tuples describing
+        the forces on the system.
     mass_matrix : Matrix
-        The system's mass matrix
+        The system's dynamics mass matrix: [k_d; k_dnh]
     forcing : Matrix
-        The system's forcing vector
+        The system's dynamics forcing vector: -[f_d; f_dnh]
     mass_matrix_full : Matrix
-        The "mass matrix" for the u's and q's
+        The "mass matrix" for the u's and q's with dynamics and kinematics
     forcing_full : Matrix
-        The "forcing vector" for the u's and q's
+        The "forcing vector" for the u's and q's with dynamics and kinematics
+
+    Notes
+    =====
+
+    The mass matrices and forcing vectors related to kinematic equations are
+    given in the explicit form by default. In other words, the kinematic mass
+    matrix is :math:`\mathbf{k_{k\dot{q}}} = \mathbf{I}`. In order to get the
+    implicit form of those matrices/vectors, you can set the
+    ``explicit_kinematics`` attribute to ``False``. So
+    :math:`\mathbf{k_{k\dot{q}}}` is not necessarily an identity matrix. This
+    can provide more compact equations for non-simple kinematics.
+
+    Two linear solvers can be supplied to ``KanesMethod``: one for solving the
+    kinematic differential equations and one to solve the velocity constraints.
+    Both of these sets of equations can be expressed as a linear system ``Ax =
+    rhs``, which have to be solved in order to obtain the equations of motion.
+
+    The default solver ``'LU'``, which stands for LU solve, results relatively
+    low number of operations. The weakness of this method is that it can result
+    in zero division errors.
+
+    If zero divisions are encountered, a possible solver which may solve the
+    problem is ``"CRAMER"``. This method uses Cramer's rule to solve the
+    system. This method is slower and results in more operations than the
+    default solver. However it only uses a single division by default per entry
+    of the solution.
+
+    While a valid list of solvers can be found at
+    :py:meth:`~sympy.matrices.matrixbase.MatrixBase.solve`, it is also
+    possible to supply a "callable". This way it is possible to use a different
+    solver routine. If the kinematic differential equations are not too complex
+    it can be worth it to simplify the solution by using ``lambda A, b:
+    simplify(Matrix.LUsolve(A, b))``. Another option solver one may use is
+    :func:`~sympy.solvers.solveset.linsolve`. This can be done using ``lambda
+    A, b: tuple(linsolve((A, b)))[0]``, where we select the first solution as
+    our system should have only one unique solution.
 
     Examples
     ========
@@ -46,7 +199,7 @@ class KanesMethod(object):
     In this example, we first need to do the kinematics.
     This involves creating generalized speeds and coordinates and their
     derivatives.
-    Then we create a point and set its velocity in a frame::
+    Then we create a point and set its velocity in a frame.
 
         >>> from sympy import symbols
         >>> from sympy.physics.mechanics import dynamicsymbols, ReferenceFrame
@@ -59,18 +212,18 @@ class KanesMethod(object):
         >>> P.set_vel(N, u * N.x)
 
     Next we need to arrange/store information in the way that KanesMethod
-    requires.  The kinematic differential equations need to be stored in a
-    dict.  A list of forces/torques must be constructed, where each entry in
-    the list is a (Point, Vector) or (ReferenceFrame, Vector) tuple, where the
-    Vectors represent the Force or Torque.
+    requires. The kinematic differential equations should be an iterable of
+    expressions. A list of forces/torques must be constructed, where each entry
+    in the list is a (Point, Vector) or (ReferenceFrame, Vector) tuple, where
+    the Vectors represent the Force or Torque.
     Next a particle needs to be created, and it needs to have a point and mass
     assigned to it.
-    Finally, a list of all bodies and particles needs to be created::
+    Finally, a list of all bodies and particles needs to be created.
 
-    >>> kd = [qd - u]
-    >>> FL = [(P, (-k * q - c * u) * N.x)]
-    >>> pa = Particle('pa', P, m)
-    >>> BL = [pa]
+        >>> kd = [qd - u]
+        >>> FL = [(P, (-k * q - c * u) * N.x)]
+        >>> pa = Particle('pa', P, m)
+        >>> BL = [pa]
 
     Finally we can generate the equations of motion.
     First we create the KanesMethod object and supply an inertial frame,
@@ -80,795 +233,819 @@ class KanesMethod(object):
     here (see the online documentation).
     Next we form FR* and FR to complete: Fr + Fr* = 0.
     We have the equations of motion at this point.
-    It makes sense to rearrnge them though, so we calculate the mass matrix and
+    It makes sense to rearrange them though, so we calculate the mass matrix and
     the forcing terms, for E.o.M. in the form: [MM] udot = forcing, where MM is
     the mass matrix, udot is a vector of the time derivatives of the
-    generalized speeds, and forcing is a vector representing "forcing" terms::
+    generalized speeds, and forcing is a vector representing "forcing" terms.
 
         >>> KM = KanesMethod(N, q_ind=[q], u_ind=[u], kd_eqs=kd)
-        >>> (fr, frstar) = KM.kanes_equations(FL, BL)
+        >>> (fr, frstar) = KM.kanes_equations(BL, FL)
         >>> MM = KM.mass_matrix
         >>> forcing = KM.forcing
         >>> rhs = MM.inv() * forcing
         >>> rhs
         Matrix([[(-c*u(t) - k*q(t))/m]])
-        >>> KM.linearize()[0]
+        >>> KM.linearize(A_and_B=True)[0]
         Matrix([
-        [ 0,  1],
-        [-k, -c]])
+        [   0,    1],
+        [-k/m, -c/m]])
 
     Please look at the documentation pages for more information on how to
     perform linearization and how to deal with dependent coordinates & speeds,
     and how do deal with bringing non-contributing forces into evidence.
 
+    References
+    ==========
+
+    .. [1] Kane, T., Levinson, D. Dynamics Theory and Applications. 1985
+       McGraw-Hill
+
     """
+    def __init__(
+        self,
+        frame,
+        q_ind,
+        u_ind,
+        kd_eqs=None,
+        q_dependent=None,
+        configuration_constraints=None,
+        u_dependent=None,
+        velocity_constraints=None,
+        acceleration_constraints=None,
+        u_auxiliary=None,
+        bodies=None,
+        forcelist=None,
+        explicit_kinematics=True,
+        kd_eqs_solver='LU',
+        constraint_solver='LU',
+        nonholonomic_constraints=None
+    ):
+        if not q_ind:
+            q_ind = [dynamicsymbols('dummy_q')]
+            kd_eqs = [dynamicsymbols('dummy_kd')]
 
-    simp = True
-    ___KDEqError = AttributeError('Create an instance of KanesMethod with' +
-                                  'kinematic differential equations to use' +
-                                  'this method.')
-
-    def __init__(self, frame, q_ind, u_ind, kd_eqs=None, q_dependent=[],
-            configuration_constraints=[], u_dependent=[],
-            velocity_constraints=[], acceleration_constraints=None,
-            u_auxiliary=[]):
-
-        """Please read the online documentation. """
-        # Big storage things
         if not isinstance(frame, ReferenceFrame):
-            raise TypeError('An intertial ReferenceFrame must be supplied')
+            raise TypeError('An inertial ReferenceFrame must be supplied')
         self._inertial = frame
-        self._forcelist = None
-        self._bodylist = None
+
         self._fr = None
         self._frstar = None
-        self._rhs = None
-        self._aux_eq = None
 
-        # States
-        self._q = None
-        self._qdep = []
-        self._qdot = None
-        self._u = None
-        self._udep = []
-        self._udot = None
-        self._uaux = None
+        self._forcelist = forcelist
+        self._bodylist = bodies
 
-        # Differential Equations Matrices and Map
-        self._k_d = None
-        self._f_d = None
-        self._k_kqdot = None
-        self._k_ku = None
-        self._f_k = None
-        self._qdot_u_map = None
+        self.explicit_kinematics = explicit_kinematics
+        self._constraint_solver = constraint_solver
+        self._initialize_vectors(q_ind, q_dependent, u_ind, u_dependent,
+                u_auxiliary)
+        _validate_coordinates(self.q, self.u)
+        self._initialize_kindiffeq_matrices(kd_eqs, kd_eqs_solver)
+        self._initialize_constraint_matrices(
+            configuration_constraints, velocity_constraints,
+            acceleration_constraints, nonholonomic_constraints,
+            linear_solver=constraint_solver)
 
-        # Constraint Matrices
-        self._f_h = Matrix([])
-        self._k_nh = Matrix([])
-        self._f_nh = Matrix([])
-        self._k_dnh = Matrix([])
-        self._f_dnh = Matrix([])
+    def _initialize_vectors(self, q_ind, q_dep, u_ind, u_dep, u_aux):
+        """Initialize the coordinate and speed vectors."""
 
-        self._coords(q_ind, q_dependent, configuration_constraints)
-        self._speeds(u_ind, u_dependent, velocity_constraints,
-                acceleration_constraints, u_auxiliary)
-        if kd_eqs is not None:
-            self._kindiffeq(kd_eqs)
+        none_handler = lambda x: Matrix(x) if x else Matrix()
 
-    def _find_dynamicsymbols(self, inlist, insyms=[]):
-        """Finds all non-supplied dynamicsymbols in the expressions."""
-        from sympy.core.function import AppliedUndef, Derivative
+        # Initialize generalized coordinates
+        q_dep = none_handler(q_dep)
+        if not iterable(q_ind):
+            raise TypeError('Generalized coordinates must be an iterable.')
+        if not iterable(q_dep):
+            raise TypeError('Dependent coordinates must be an iterable.')
+        q_ind = Matrix(q_ind)
+        self._qdep = q_dep
+        self._q = Matrix([q_ind, q_dep])
+        self._qdot = self.q.diff(dynamicsymbols._t)
+
+        # Initialize generalized speeds
+        u_dep = none_handler(u_dep)
+        if not iterable(u_ind):
+            raise TypeError('Generalized speeds must be an iterable.')
+        if not iterable(u_dep):
+            raise TypeError('Dependent speeds must be an iterable.')
+        u_ind = Matrix(u_ind)
+        self._udep = u_dep
+        self._u = Matrix([u_ind, u_dep])
+        self._udot = self.u.diff(dynamicsymbols._t)
+        self._uaux = none_handler(u_aux)
+
+    def _initialize_constraint_matrices(self, config, vel, acc, nonholonomic,
+                                        linear_solver='LU'):
+        """Initializes constraint matrices."""
+        none_handler = lambda x: Matrix(x) if x else Matrix()
+        linear_solver = _parse_linear_solver(linear_solver)
         t = dynamicsymbols._t
-        return reduce(set.union, [set([i]) for j in inlist
-            for i in j.atoms(AppliedUndef, Derivative)
-            if i.atoms() == set([t])], set()) - insyms
 
-        temp_f = set().union(*[i.atoms(AppliedUndef) for i in inlist])
-        temp_d = set().union(*[i.atoms(Derivative) for i in inlist])
-        set_f = set([a for a in temp_f if a.args == (t,)])
-        set_d = set([a for a in temp_d if ((a.args[0] in set_f) and all([i == t
-                     for i in a.variables]))])
-        return list(set.union(set_f, set_d) - set(insyms))
+        # Define vector dimensions
+        num_speeds = len(self.u)
+        num_dep_speeds = len(self._udep)
+        num_dof = num_speeds - num_dep_speeds
 
-    def _find_othersymbols(self, inlist, insyms=[]):
-        """Finds all non-dynamic symbols in the expressions."""
-        return list(reduce(set.union, [i.atoms(Symbol) for i in inlist]) -
-                    set(insyms))
-
-    def _mat_inv_mul(self, A, B):
-        """Internal Function
-
-        Computes A^-1 * B symbolically w/ substitution, where B is not
-        necessarily a vector, but can be a matrix.
-
-        """
-
-        r1, c1 = A.shape
-        r2, c2 = B.shape
-        temp1 = Matrix(r1, c1, lambda i, j: Symbol('x' + str(j) + str(r1 * i)))
-        temp2 = Matrix(r2, c2, lambda i, j: Symbol('y' + str(j) + str(r2 * i)))
-        for i in range(len(temp1)):
-            if A[i] == 0:
-                temp1[i] = 0
-        for i in range(len(temp2)):
-            if B[i] == 0:
-                temp2[i] = 0
-        temp3 = []
-        for i in range(c2):
-            temp3.append(temp1.LDLsolve(temp2[:, i]))
-        temp3 = Matrix([i.T for i in temp3]).T
-        return temp3.subs(dict(list(zip(temp1, A)))).subs(dict(list(zip(temp2, B))))
-
-    def _coords(self, qind, qdep=[], coneqs=[]):
-        """Supply all the generalized coordinates in a list.
-
-        If some coordinates are dependent, supply them as part of qdep. Their
-        dependent nature will only show up in the linearization process though.
-
-        Parameters
-        ==========
-
-        qind : list
-            A list of independent generalized coords
-        qdep : list
-            List of dependent coordinates
-        coneq : list
-            List of expressions which are equal to zero; these are the
-            configuration constraint equations
-        """
-
-        if not isinstance(qind, (list, tuple)):
-            raise TypeError('Generalized coords. must be supplied in a list.')
-        self._q = qind + qdep
-        self._qdot = [diff(i, dynamicsymbols._t) for i in self._q]
-
-        if not isinstance(qdep, (list, tuple)):
-            raise TypeError('Dependent coordinates and constraints must each be '
-                            'provided in their own list.')
-        if len(qdep) != len(coneqs):
+        # Initialize configuration constraints
+        self._f_h = none_handler(config)
+        if len(self._qdep) != len(self.holonomic_constraints):
             raise ValueError('There must be an equal number of dependent '
-                             'coordinates and constraints.')
-        coneqs = Matrix(coneqs)
-        self._qdep = qdep
-        self._f_h = coneqs
+                             'coordinates and configuration constraints.')
 
-    def _speeds(self, uind, udep=[], coneqs=[], diffconeqs=None, u_auxiliary=[]):
-        """Supply all the generalized speeds in a list.
+        if nonholonomic is not None and vel is not None:
+            msg = ('Only one of the kwargs velocity_constraints or '
+                   'nonholonomic_constraints can be supplied at a time.')
+            raise ValueError(msg)
 
-        If there are motion constraints or auxiliary speeds, they are provided
-        here as well (as well as motion constraints).
+        # Initialize velocity and acceleration constraints
+        self._nonholonomic_constraints = msubs(none_handler(nonholonomic),
+                                               self._qdot_u_map)
+        vel = none_handler(vel)
+        if vel:  # use the user supplied velocity constraints
+            self._velocity_constraints = msubs(vel, self._qdot_u_map)
+        elif self.holonomic_constraints and self.nonholonomic_constraints:
+            con_diff = msubs(
+                self.holonomic_constraints.diff(t),
+                self._qdot_u_map)
+            self._velocity_constraints = con_diff.col_join(
+                self.nonholonomic_constraints)
+        elif not self.holonomic_constraints and self.nonholonomic_constraints:
+            self._velocity_constraints = self.nonholonomic_constraints
+        elif self.holonomic_constraints and not self.nonholonomic_constraints:
+            self._velocity_constraints = msubs(
+                self.holonomic_constraints.diff(t),
+                self._qdot_u_map)
+        else:
+            self._velocity_constraints = Matrix([])
 
-        Parameters
-        ==========
-
-        uind : list
-            A list of independent generalized speeds
-        udep : list
-            Optional list of dependent speeds
-        coneqs : list
-            Optional List of constraint expressions; these are expressions
-            which are equal to zero which define a speed (motion) constraint.
-        diffconeqs : list
-            Optional, calculated automatically otherwise; list of constraint
-            equations; again equal to zero, but define an acceleration
-            constraint.
-        u_auxiliary : list
-            An optional list of auxiliary speeds used for brining
-            non-contributing forces into evidence
-
-        """
-
-        if not hasattr(uind, '__iter__'):
-            raise TypeError('Supply generalized speeds in an iterable.')
-        self._u = uind + udep
-        self._udot = [diff(i, dynamicsymbols._t) for i in self._u]
-        self._uaux = u_auxiliary
-
-        if not hasattr(udep, '__iter__'):
-            raise TypeError('Supply dependent speeds in an iterable.')
-        if len(udep) != len(coneqs):
+        acc = none_handler(acc)
+        if len(self.velocity_constraints) != num_dep_speeds:
             raise ValueError('There must be an equal number of dependent '
-                             'speeds and constraints.')
-        if diffconeqs is not None:
-            if len(udep) != len(diffconeqs):
-                raise ValueError('There must be an equal number of dependent '
-                                 'speeds and constraints.')
-        if len(udep) != 0:
-            u = self._u
-            uzero = dict(list(zip(u, [0] * len(u))))
-            coneqs = Matrix(coneqs)
-            udot = self._udot
-            udotzero = dict(list(zip(udot, [0] * len(udot))))
+                             'speeds and velocity constraints.')
+        if acc and (len(acc) != num_dep_speeds):
+            raise ValueError('There must be an equal number of dependent '
+                             'speeds and acceleration constraints.')
+        if self.velocity_constraints:
+            # When calling kanes_equations, another class instance will be
+            # created if auxiliary u's are present. In this case, the
+            # computation of kinematic differential equation matrices will be
+            # skipped as this was computed during the original KanesMethod
+            # object, and the qd_u_map will not be available.
+            self._k_nh, f_nh_neg = linear_eq_to_matrix(
+                self.velocity_constraints, self.u[:])
+            self._f_nh = -f_nh_neg
 
-            self._udep = udep
-            self._f_nh = coneqs.subs(uzero)
-            self._k_nh = (coneqs - self._f_nh).jacobian(u)
-            # if no differentiated non holonomic constraints were given, calculate
-            if diffconeqs is None:
+            # If no acceleration constraints given, calculate them.
+            if not acc:
+                _f_dnh = self._k_nh.diff(t)*self.u + self._f_nh.diff(t)
+                _f_dnh = msubs(_f_dnh, self._qdot_u_map)
+                self._f_dnh = _f_dnh
                 self._k_dnh = self._k_nh
-                self._f_dnh = (self._k_nh.diff(dynamicsymbols._t) * Matrix(u) +
-                               self._f_nh.diff(dynamicsymbols._t))
+                self._acceleration_constraints = (self._k_dnh*self._udot +
+                                                  self._f_dnh)
             else:
-                self._f_dnh = diffconeqs.subs(udotzero)
-                self._k_dnh = (diffconeqs - self._f_dnh).jacobian(udot)
+                qdd_repl = {qi.diff(t): msubs(expr.diff(t), self._qdot_u_map)
+                            for qi, expr in self._qdot_u_map.items()}
+                acc = msubs(acc, qdd_repl, self._qdot_u_map)
+                self._acceleration_constraints = acc
+                self._k_dnh, f_dnh_neg = linear_eq_to_matrix(acc,
+                                                             self._udot[:])
+                self._f_dnh = -f_dnh_neg
+            # Form of non-holonomic constraints is B*u + C = 0.
+            # We partition B into independent and dependent columns:
+            # Ars is then -B_dep.inv() * B_ind, and it relates dependent speeds
+            # to independent speeds as: udep = Ars*uind, neglecting the C term.
+            self._B_ind = self._k_nh[:, :num_dof]
+            self._B_dep = self._k_nh[:, num_dof:num_speeds]
+            try:
+                self._Ars = -linear_solver(self._B_dep, self._B_ind)
+            except NonInvertibleMatrixError as e:
+                msg = ('Ars is singular, maybe due to a wrong set of dependent'
+                       ' speeds. Try a different set of dependent speeds.')
+                raise NonInvertibleMatrixError(msg) from e
+        else:
+            self._f_nh = Matrix()
+            self._k_nh = Matrix()
+            self._f_dnh = Matrix()
+            self._k_dnh = Matrix()
+            self._acceleration_constraints = Matrix()
+            self._B_ind = Matrix()
+            self._B_dep = Matrix()
+            self._Ars = Matrix()
 
-            o = len(u)  # number of generalized speeds
-            m = len(udep)  # number of motion constraints
-            p = o - m  # number of independent speeds
-            # For a reminder, form of non-holonomic constraints is:
-            # B u + C = 0
-            B = self._k_nh[:, :]
-            C = self._f_nh[:, 0]
+    @property
+    def constraints_jacobian(self):
+        """Coefficient matrix ``C`` which is the Jacobian of the constraints
+        with respect to the generalized speeds :py:attr:`~.KanesMethod.u`.
 
-            # We partition B into indenpendent and dependent columns
-            # Ars is then -Bdep.inv() * Bind, and it relates depedent speeds to
-            # independent speeds as: udep = Ars uind, neglecting the C term here.
-            self._depB = B
-            self._depC = C
-            mr1 = B[:, :p]
-            ml1 = B[:, p:o]
-            self._Ars = - self._mat_inv_mul(ml1, mr1)
+        Explanation
+        ===========
 
-    def _partial_velocity(self, vlist, ulist, frame):
-        """Returns the list of partial velocities, replacing qdot's in the
-        velocity list if necessary.
+        The matrix is extracted from
+        :py:attr:`~.KanesMethod.velocity_constraints`.
+
+        .. code:: text
+
+            fv = C*u + gv(q, t) = C*u + gv(q, t) = 0
+
         """
-        if self._qdot_u_map is None:
-            raise ___KDEqError
-        v = [vel.subs(self._qdot_u_map) for vel in vlist]
-        return partial_velocity(v, ulist, frame)
+        # u = [uind]
+        #     [udep]
+        return self._B_ind.row_join(self._B_dep)
 
-    def kindiffdict(self):
-        """Returns the qdot's in a dictionary. """
-        if self._qdot_u_map is None:
-            raise ___KDEqError
-        return self._qdot_u_map
-
-    def _kindiffeq(self, kdeqs):
-        """Supply all the kinematic differential equations in a list.
-
-        They should be in the form [Expr1, Expr2, ...] where Expri is equal to
-        zero
+    def _initialize_kindiffeq_matrices(self, kdeqs, linear_solver='LU'):
+        """Initialize the kinematic differential equation matrices.
 
         Parameters
         ==========
-
-        kdeqs : list (of Expr)
-            The listof kinematic differential equations
+        kdeqs : sequence of sympy expressions
+            Kinematic differential equations in the form of f(u,q',q,t) where
+            f() = 0. The equations have to be linear in the time-derivatives of
+            the generalized coordinates and in the generalized speeds.
 
         """
-        if len(self._q) != len(kdeqs):
-            raise ValueError('There must be an equal number of kinematic '
-                             'differential equations and coordinates.')
+        linear_solver = _parse_linear_solver(linear_solver)
+        if kdeqs:
+            if len(self.q) != len(kdeqs):
+                raise ValueError('There must be an equal number of kinematic '
+                                 'differential equations and coordinates.')
 
-        uaux = self._uaux
-        # dictionary of auxiliary speeds which are equal to zero
-        uaz = dict(list(zip(uaux, [0] * len(uaux))))
+            u = self.u
+            qdot = self._qdot
 
-        #kdeqs = Matrix(kdeqs).subs(uaz)
-        kdeqs = Matrix(kdeqs)
+            kdeqs = Matrix(kdeqs)
 
-        qdot = self._qdot
-        qdotzero = dict(list(zip(qdot, [0] * len(qdot))))
-        u = self._u
-        uzero = dict(list(zip(u, [0] * len(u))))
+            u_zero = dict.fromkeys(u, 0)
+            uaux_zero = dict.fromkeys(self._uaux, 0)
+            qdot_zero = dict.fromkeys(qdot, 0)
 
-        f_k = kdeqs.subs(uzero).subs(qdotzero)
-        k_kqdot = (kdeqs.subs(uzero) - f_k).jacobian(Matrix(qdot))
-        k_ku = (kdeqs.subs(qdotzero) - f_k).jacobian(Matrix(u))
+            # Extract the linear coefficient matrices as per the following
+            # equation:
+            #
+            # k_ku(q,t)*u(t) + k_kqdot(q,t)*q'(t) + f_k(q,t) = 0
+            #
+            k_ku = kdeqs.jacobian(u)
+            k_kqdot = kdeqs.jacobian(qdot)
+            f_k = kdeqs.xreplace(u_zero).xreplace(qdot_zero)
 
-        self._k_ku = self._mat_inv_mul(k_kqdot, k_ku)
-        self._f_k = self._mat_inv_mul(k_kqdot, f_k)
-        self._k_kqdot = eye(len(qdot))
-        self._qdot_u_map = solve_linear_system_LU(Matrix([self._k_kqdot.T,
-            -(self._k_ku * Matrix(self._u) + self._f_k).T]).T, self._qdot)
+            # The kinematic differential equations should be linear in both q'
+            # and u so check for u and q' in the components.
+            dy_syms = find_dynamicsymbols(k_ku.row_join(k_kqdot).row_join(f_k))
+            nonlin_vars = [vari for vari in u[:] + qdot[:] if vari in dy_syms]
+            if nonlin_vars:
+                msg = ('The provided kinematic differential equations are '
+                       'nonlinear in {}. They must be linear in the '
+                       'generalized speeds and derivatives of the generalized '
+                       'coordinates.')
+                raise ValueError(msg.format(nonlin_vars))
 
-        self._k_ku = self._mat_inv_mul(k_kqdot, k_ku).subs(uaz)
-        self._f_k = self._mat_inv_mul(k_kqdot, f_k).subs(uaz)
+            self._f_k_implicit = f_k.xreplace(uaux_zero)
+            self._k_ku_implicit = k_ku.xreplace(uaux_zero)
+            self._k_kqdot_implicit = k_kqdot
+
+            # Solve for q'(t) such that the coefficient matrices are now in
+            # this form:
+            #
+            # k_kqdot^-1*k_ku*u(t) + I*q'(t) + k_kqdot^-1*f_k = 0
+            #
+            # NOTE : Solving the kinematic differential equations here is not
+            # necessary and prevents the equations from being provided in fully
+            # implicit form.
+            f_k_explicit = linear_solver(k_kqdot, f_k)
+            k_ku_explicit = linear_solver(k_kqdot, k_ku)
+            self._qdot_u_map = dict(zip(qdot,
+                                        -(k_ku_explicit*u + f_k_explicit)))
+
+            self._f_k = f_k_explicit.xreplace(uaux_zero)
+            self._k_ku = k_ku_explicit.xreplace(uaux_zero)
+            self._k_kqdot = eye(len(qdot))
+
+        else:
+            self._qdot_u_map = {}
+            self._f_k_implicit = self._f_k = Matrix()
+            self._k_ku_implicit = self._k_ku = Matrix()
+            self._k_kqdot_implicit = self._k_kqdot = Matrix()
 
     def _form_fr(self, fl):
-        """Form the generalized active force.
-
-        Computes the vector of the generalized active force vector.
-        Used to compute E.o.M. in the form Fr + Fr* = 0.
-
-        Parameters
-        ==========
-
-        fl : list
-            Takes in a list of (Point, Vector) or (ReferenceFrame, Vector)
-            tuples which represent the force at a point or torque on a frame.
-
-        """
-
-        if not hasattr(fl, '__iter__'):
-            raise TypeError('Force pairs must be supplied in an iterable.')
+        """Form the generalized active force."""
+        if fl is not None and (len(fl) == 0 or not iterable(fl)):
+            raise ValueError('Force pairs must be supplied in an '
+                'non-empty iterable or None.')
 
         N = self._inertial
-        self._forcelist = fl[:]
-        u = self._u
-        o = len(u)  # number of gen. speeds
-        b = len(fl)  # number of forces
-
-        FR = zeros(o, 1)
-
         # pull out relevant velocities for constructing partial velocities
-        vel_list = []
-        f_list = []
-        for i in fl:
-            if isinstance(i[0], ReferenceFrame):
-                vel_list += [i[0].ang_vel_in(N)]
-            elif isinstance(i[0], Point):
-                vel_list += [i[0].vel(N)]
-            else:
-                raise TypeError('First entry in pair must be point or frame.')
-            f_list += [i[1]]
-        partials = self._partial_velocity(vel_list, u, N)
+        vel_list, f_list = _f_list_parser(fl, N)
+        vel_list = [msubs(i, self._qdot_u_map) for i in vel_list]
+        f_list = [msubs(i, self._qdot_u_map) for i in f_list]
 
         # Fill Fr with dot product of partial velocities and forces
+        o = len(self.u)
+        b = len(f_list)
+        FR = zeros(o, 1)
+        partials = partial_velocity(vel_list, self.u, N)
         for i in range(o):
-            for j in range(b):
-                FR[i] += partials[j][i] & f_list[j]
+            FR[i] = sum(partials[j][i].dot(f_list[j]) for j in range(b))
 
         # In case there are dependent speeds
-        m = len(self._udep)  # number of dependent speeds
-        if m != 0:
-            p = o - m
+        if self._udep:
+            p = o - len(self._udep)
             FRtilde = FR[:p, 0]
             FRold = FR[p:o, 0]
             FRtilde += self._Ars.T * FRold
             FR = FRtilde
 
+        self._forcelist = fl
         self._fr = FR
         return FR
 
     def _form_frstar(self, bl):
-        """Form the generalized inertia force.
+        """Form the generalized inertia force."""
 
-        Computes the vector of the generalized inertia force vector.
-        Used to compute E.o.M. in the form Fr + Fr* = 0.
-
-        Parameters
-        ==========
-
-        bl : list
-            A list of all RigidBody's and Particle's in the system.
-
-        """
-
-        if not hasattr(bl, '__iter__'):
+        if not iterable(bl):
             raise TypeError('Bodies must be supplied in an iterable.')
+
         t = dynamicsymbols._t
         N = self._inertial
-        self._bodylist = bl
-        u = self._u  # all speeds
-        udep = self._udep  # dependent speeds
-        o = len(u)
-        m = len(udep)
-        p = o - m
-        udot = self._udot
-        udotzero = dict(list(zip(udot, [0] * o)))
-        # auxiliary speeds
-        uaux = self._uaux
-        uauxdot = [diff(i, t) for i in uaux]
-        # dictionary of auxiliary speeds which are equal to zero
-        uaz = dict(list(zip(uaux, [0] * len(uaux))))
-        uadz = dict(list(zip(uauxdot, [0] * len(uauxdot))))
-        # dictionary of qdot's to u's
-        qdots = dict(list(zip(list(self._qdot_u_map.keys()),
-                         list(self._qdot_u_map.values()))))
-        for k, v in list(qdots.items()):
-            qdots[k.diff(t)] = v.diff(t)
+        # Dicts setting things to zero
+        udot_zero = dict.fromkeys(self._udot, 0)
+        uaux_zero = dict.fromkeys(self._uaux, 0)
+        uauxdot = [diff(i, t) for i in self._uaux]
+        uauxdot_zero = dict.fromkeys(uauxdot, 0)
+        # Dictionary of q' and q'' to u and u'
+        q_ddot_u_map = {k.diff(t): v.diff(t).xreplace(
+            self._qdot_u_map) for (k, v) in self._qdot_u_map.items()}
+        q_ddot_u_map.update(self._qdot_u_map)
 
-        MM = zeros(o, o)
-        nonMM = zeros(o, 1)
-        partials = []
-        # Fill up the list of partials: format is a list with no. elements
+        # Fill up the list of partials: format is a list with num elements
         # equal to number of entries in body list. Each of these elements is a
         # list - either of length 1 for the translational components of
         # particles or of length 2 for the translational and rotational
         # components of rigid bodies. The inner most list is the list of
         # partial velocities.
-        for v in bl:
-            if isinstance(v, RigidBody):
-                partials += [self._partial_velocity([v.masscenter.vel(N),
-                                                     v.frame.ang_vel_in(N)],
-                                                    u, N)]
-            elif isinstance(v, Particle):
-                partials += [self._partial_velocity([v.point.vel(N)], u, N)]
+        def get_partial_velocity(body):
+            if isinstance(body, RigidBody):
+                vlist = [body.masscenter.vel(N), body.frame.ang_vel_in(N)]
+            elif isinstance(body, Particle):
+                vlist = [body.point.vel(N),]
             else:
-                raise TypeError('The body list needs RigidBody or '
-                                'Particle as list elements.')
+                raise TypeError('The body list may only contain either '
+                                'RigidBody or Particle as list elements.')
+            v = [msubs(vel, self._qdot_u_map) for vel in vlist]
+            return partial_velocity(v, self.u, N)
+        partials = [get_partial_velocity(body) for body in bl]
 
-        # This section does 2 things - computes the parts of Fr* that are
-        # associated with the udots, and the parts that are not associated with
-        # the udots. This happens for RigidBody and Particle a little
-        # differently, but similar process overall.
-        for i, v in enumerate(bl):
-            if isinstance(v, RigidBody):
-                M = v.mass.subs(uaz).doit()
-                I = v.central_inertia.subs(uaz).doit()
+        # Compute fr_star in two components:
+        # fr_star = -(MM*u' + nonMM)
+        o = len(self.u)
+        MM = zeros(o, o)
+        nonMM = zeros(o, 1)
+        zero_uaux = lambda expr: msubs(expr, uaux_zero)
+        zero_udot_uaux = lambda expr: msubs(msubs(expr, udot_zero), uaux_zero)
+        for i, body in enumerate(bl):
+            if isinstance(body, RigidBody):
+                M = zero_uaux(body.mass)
+                I = zero_uaux(body.central_inertia)
+                vel = zero_uaux(body.masscenter.vel(N))
+                omega = zero_uaux(body.frame.ang_vel_in(N))
+                acc = zero_udot_uaux(body.masscenter.acc(N))
+                inertial_force = (M.diff(t) * vel + M * acc)
+                inertial_torque = zero_uaux((I.dt(body.frame).dot(omega)) +
+                    msubs(I.dot(body.frame.ang_acc_in(N)), udot_zero) +
+                    (omega.cross(I.dot(omega))))
                 for j in range(o):
+                    tmp_vel = zero_uaux(partials[i][0][j])
+                    tmp_ang = zero_uaux(I.dot(partials[i][1][j]))
                     for k in range(o):
                         # translational
-                        MM[j, k] += M * (partials[i][0][j].subs(uaz).doit() &
-                                         partials[i][0][k])
+                        MM[j, k] += M*tmp_vel.dot(partials[i][0][k])
                         # rotational
-                        temp = (I & partials[i][1][j].subs(uaz).doit())
-                        MM[j, k] += (temp &
-                                     partials[i][1][k])
-                    # translational components
-                    nonMM[j] += ( (M.diff(t) *
-                                   v.masscenter.vel(N)).subs(uaz).doit() &
-                                 partials[i][0][j])
-                    nonMM[j] += (M *
-                            v.masscenter.acc(N).subs(udotzero).subs(uaz).doit()
-                            & partials[i][0][j])
-                    # rotational components
-                    omega = v.frame.ang_vel_in(N).subs(uaz).doit()
-                    nonMM[j] += ((I.dt(v.frame) & omega).subs(uaz).doit() &
-                                 partials[i][1][j])
-                    nonMM[j] += ((I &
-                        v.frame.ang_acc_in(N)).subs(udotzero).subs(uaz).doit()
-                        & partials[i][1][j])
-                    nonMM[j] += ((omega ^ (I & omega)).subs(uaz).doit() &
-                                 partials[i][1][j])
-
-            if isinstance(v, Particle):
-                M = v.mass.subs(uaz).doit()
+                        MM[j, k] += tmp_ang.dot(partials[i][1][k])
+                    nonMM[j] += inertial_force.dot(partials[i][0][j])
+                    nonMM[j] += inertial_torque.dot(partials[i][1][j])
+            else:
+                M = zero_uaux(body.mass)
+                vel = zero_uaux(body.point.vel(N))
+                acc = zero_udot_uaux(body.point.acc(N))
+                inertial_force = (M.diff(t) * vel + M * acc)
                 for j in range(o):
+                    temp = zero_uaux(partials[i][0][j])
                     for k in range(o):
-                        MM[j, k] += M * (partials[i][0][j].subs(uaz).doit() &
-                                         partials[i][0][k])
-                    nonMM[j] += M.diff(t) * (v.point.vel(N).subs(uaz).doit() &
-                                             partials[i][0][j])
-                    nonMM[j] += (M *
-                            v.point.acc(N).subs(udotzero).subs(uaz).doit() &
-                            partials[i][0][j])
-        # Negate FRSTAR since Kane defines the inertia forces/torques
-        # to be negative and we didn't do so above.
-        MM = MM.subs(qdots).subs(uaz).doit()
-        nonMM = nonMM.subs(qdots).subs(udotzero).subs(uadz).subs(uaz).doit()
-        FRSTAR = -(MM * Matrix(udot).subs(uadz) + nonMM)
+                        MM[j, k] += M*temp.dot(partials[i][0][k])
+                    nonMM[j] += inertial_force.dot(partials[i][0][j])
+        # Compose fr_star out of MM and nonMM
+        MM = zero_uaux(msubs(MM, q_ddot_u_map))
+        nonMM = msubs(msubs(nonMM, q_ddot_u_map),
+                udot_zero, uauxdot_zero, uaux_zero)
+        fr_star = -(MM * msubs(Matrix(self._udot), uauxdot_zero) + nonMM)
 
-        # For motion constraints, m is the number of constraints
-        # Really, one should just look at Kane's book for descriptions of this
-        # process
-        if m != 0:
-            FRSTARtilde = FRSTAR[:p, 0]
-            FRSTARold = FRSTAR[p:o, 0]
-            FRSTARtilde += self._Ars.T * FRSTARold
-            FRSTAR = FRSTARtilde
-
+        # If there are dependent speeds, we need to find fr_star_tilde
+        if self._udep:
+            p = o - len(self._udep)
+            fr_star_ind = fr_star[:p, 0]
+            fr_star_dep = fr_star[p:o, 0]
+            fr_star = fr_star_ind + (self._Ars.T * fr_star_dep)
+            # Apply the same to MM
             MMi = MM[:p, :]
             MMd = MM[p:o, :]
-            MM = MMi + self._Ars.T * MMd
-        self._frstar = FRSTAR
+            MM = MMi + (self._Ars.T * MMd)
+            # Apply the same to nonMM
+            nonMM = nonMM[:p, :] + (self._Ars.T * nonMM[p:o, :])
 
-        zeroeq = -(self._fr + self._frstar)
-        zeroeq = zeroeq.subs(udotzero)
-
+        self._bodylist = bl
+        self._frstar = fr_star
         self._k_d = MM
-        self._f_d = zeroeq
-        return FRSTAR
+        self._f_d = -(self._fr - nonMM)
+        return fr_star
 
-    def kanes_equations(self, FL, BL):
+    def to_linearizer(self, linear_solver='LU'):
+        """Returns an instance of the Linearizer class, initiated from the
+        data in the KanesMethod class. This may be more desirable than using
+        the linearize class method, as the Linearizer object will allow more
+        efficient recalculation (i.e. about varying operating points).
+
+        Parameters
+        ==========
+        linear_solver : str, callable
+            Method used to solve the several symbolic linear systems of the
+            form ``A*x=b`` in the linearization process. If a string is
+            supplied, it should be a valid method that can be used with the
+            :meth:`sympy.matrices.matrixbase.MatrixBase.solve`. If a callable is
+            supplied, it should have the format ``x = f(A, b)``, where it
+            solves the equations and returns the solution. The default is
+            ``'LU'`` which corresponds to SymPy's ``A.LUsolve(b)``.
+            ``LUsolve()`` is fast to compute but will often result in
+            divide-by-zero and thus ``nan`` results.
+
+        Returns
+        =======
+        Linearizer
+            An instantiated
+            :class:`sympy.physics.mechanics.linearize.Linearizer`.
+
+        """
+
+        if (self._fr is None) or (self._frstar is None):
+            raise ValueError('Need to compute Fr, Fr* first.')
+
+        # Get required equation components. The Kane's method class breaks
+        # these into pieces. Need to reassemble
+        f_c = self._f_h
+        if self._f_nh and self._k_nh:
+            f_v = self._f_nh + self._k_nh*Matrix(self.u)
+        else:
+            f_v = Matrix()
+        if self._f_dnh and self._k_dnh:
+            f_a = self._f_dnh + self._k_dnh*Matrix(self._udot)
+        else:
+            f_a = Matrix()
+        # Dicts to sub to zero, for splitting up expressions
+        u_zero = dict.fromkeys(self.u, 0)
+        ud_zero = dict.fromkeys(self._udot, 0)
+        qd_zero = dict.fromkeys(self._qdot, 0)
+        qd_u_zero = dict.fromkeys(Matrix([self._qdot, self.u]), 0)
+        # Break the kinematic differential eqs apart into f_0 and f_1
+        f_0 = msubs(self._f_k, u_zero) + self._k_kqdot*Matrix(self._qdot)
+        f_1 = msubs(self._f_k, qd_zero) + self._k_ku*Matrix(self.u)
+        # Break the dynamic differential eqs into f_2 and f_3
+        f_2 = msubs(self._frstar, qd_u_zero)
+        f_3 = msubs(self._frstar, ud_zero) + self._fr
+        f_4 = zeros(len(f_2), 1)
+
+        # Get the required vector components
+        q = self.q
+        u = self.u
+        if self._qdep:
+            q_i = q[:-len(self._qdep)]
+        else:
+            q_i = q
+        q_d = self._qdep
+        if self._udep:
+            u_i = u[:-len(self._udep)]
+        else:
+            u_i = u
+        u_d = self._udep
+
+        # Form dictionary to set auxiliary speeds & their derivatives to 0.
+        uaux = self._uaux
+        uauxdot = uaux.diff(dynamicsymbols._t)
+        uaux_zero = dict.fromkeys(Matrix([uaux, uauxdot]), 0)
+
+        # Checking for dynamic symbols outside the dynamic differential
+        # equations; throws error if there is.
+        sym_list = set(Matrix([q, self._qdot, u, self._udot, uaux, uauxdot]))
+        if any(find_dynamicsymbols(i, sym_list) for i in [self._k_kqdot,
+                self._k_ku, self._f_k, self._k_dnh, self._f_dnh, self._k_d]):
+            raise ValueError('Cannot have dynamicsymbols outside dynamic \
+                             forcing vector.')
+
+        # Find all other dynamic symbols, forming the forcing vector r.
+        # Sort r to make it canonical.
+        r = list(find_dynamicsymbols(msubs(self._f_d, uaux_zero), sym_list))
+        r.sort(key=default_sort_key)
+
+        # Check for any derivatives of variables in r that are also found in r.
+        for i in r:
+            if diff(i, dynamicsymbols._t) in r:
+                raise ValueError('Cannot have derivatives of specified \
+                                 quantities when linearizing forcing terms.')
+        return Linearizer(f_0, f_1, f_2, f_3, f_4, f_c, f_v, f_a, q, u, q_i,
+                q_d, u_i, u_d, r, linear_solver=linear_solver)
+
+    # TODO : Remove `new_method` after 1.1 has been released.
+    def linearize(self, *, new_method=None, linear_solver='LU', **kwargs):
+        """ Linearize the equations of motion about a symbolic operating point.
+
+        Parameters
+        ==========
+        new_method
+            Deprecated, does nothing and will be removed.
+        linear_solver : str, callable
+            Method used to solve the several symbolic linear systems of the
+            form ``A*x=b`` in the linearization process. If a string is
+            supplied, it should be a valid method that can be used with the
+            :meth:`sympy.matrices.matrixbase.MatrixBase.solve`. If a callable is
+            supplied, it should have the format ``x = f(A, b)``, where it
+            solves the equations and returns the solution. The default is
+            ``'LU'`` which corresponds to SymPy's ``A.LUsolve(b)``.
+            ``LUsolve()`` is fast to compute but will often result in
+            divide-by-zero and thus ``nan`` results.
+        **kwargs
+            Extra keyword arguments are passed to
+            :meth:`sympy.physics.mechanics.linearize.Linearizer.linearize`.
+
+        Explanation
+        ===========
+
+        If kwarg A_and_B is False (default), returns M, A, B, r for the
+        linearized form, M*[q', u']^T = A*[q_ind, u_ind]^T + B*r.
+
+        If kwarg A_and_B is True, returns A, B, r for the linearized form
+        dx = A*x + B*r, where x = [q_ind, u_ind]^T. Note that this is
+        computationally intensive if there are many symbolic parameters. For
+        this reason, it may be more desirable to use the default A_and_B=False,
+        returning M, A, and B. Values may then be substituted in to these
+        matrices, and the state space form found as
+        A = P.T*M.inv()*A, B = P.T*M.inv()*B, where P = Linearizer.perm_mat.
+
+        In both cases, r is found as all dynamicsymbols in the equations of
+        motion that are not part of q, u, q', or u'. They are sorted in
+        canonical form.
+
+        The operating points may be also entered using the ``op_point`` kwarg.
+        This takes a dictionary of {symbol: value}, or a an iterable of such
+        dictionaries. The values may be numeric or symbolic. The more values
+        you can specify beforehand, the faster this computation will run.
+
+        For more documentation, please see the ``Linearizer`` class.
+
+        """
+
+        linearizer = self.to_linearizer(linear_solver=linear_solver)
+        result = linearizer.linearize(**kwargs)
+        return result + (linearizer.r,)
+
+    def kanes_equations(self, bodies=None, loads=None):
         """ Method to form Kane's equations, Fr + Fr* = 0.
+
+        Explanation
+        ===========
 
         Returns (Fr, Fr*). In the case where auxiliary generalized speeds are
         present (say, s auxiliary speeds, o generalized speeds, and m motion
         constraints) the length of the returned vectors will be o - m + s in
         length. The first o - m equations will be the constrained Kane's
         equations, then the s auxiliary Kane's equations. These auxiliary
-        equations can be accessed with the auxiliary_eqs().
+        equations can be accessed with the auxiliary_eqs property.
 
         Parameters
         ==========
 
-        FL : list
-            Takes in a list of (Point, Vector) or (ReferenceFrame, Vector)
+        bodies : iterable
+            An iterable of all RigidBody's and Particle's in the system.
+            A system must have at least one body.
+        loads : iterable
+            Takes in an iterable of (Particle, Vector) or (ReferenceFrame, Vector)
             tuples which represent the force at a point or torque on a frame.
-        BL : list
-            A list of all RigidBody's and Particle's in the system.
-
+            Must be either a non-empty iterable of tuples or None which corresponds
+            to a system with no constraints.
         """
-
-        if (self._q is None) or (self._u is None):
-            raise ValueError('Speeds and coordinates must be supplied first.')
-        if (self._k_kqdot is None):
-            raise __KDEqError
-
-
-        fr = self._form_fr(FL)
-        frstar = self._form_frstar(BL)
-        if self._uaux != []:
-            if self._udep == []:
-                km = KanesMethod(self._inertial, self._q, self._uaux,
-                             u_auxiliary=self._uaux)
+        if bodies is None:
+            bodies = self.bodies
+        if  loads is None and self._forcelist is not None:
+            loads = self._forcelist
+        if loads == []:
+            loads = None
+        if not self._k_kqdot:
+            raise AttributeError('Create an instance of KanesMethod with '
+                    'kinematic differential equations to use this method.')
+        fr = self._form_fr(loads)
+        frstar = self._form_frstar(bodies)
+        if self._uaux:
+            if not self._udep:
+                km = KanesMethod(self._inertial, self.q, self._uaux,
+                             u_auxiliary=self._uaux, constraint_solver=self._constraint_solver)
             else:
-                km = KanesMethod(self._inertial, self._q, self._uaux,
-                u_auxiliary=self._uaux, u_dependent=self._udep,
-                velocity_constraints=(self._k_nh * Matrix(self._u) + self._f_nh))
+                km = KanesMethod(self._inertial, self.q, self._uaux,
+                        u_auxiliary=self._uaux, u_dependent=self._udep,
+                        velocity_constraints=(self._k_nh * self.u +
+                        self._f_nh),
+                        acceleration_constraints=(self._k_dnh * self._udot +
+                        self._f_dnh),
+                        constraint_solver=self._constraint_solver
+                        )
             km._qdot_u_map = self._qdot_u_map
             self._km = km
-            fraux = km._form_fr(FL)
-            frstaraux = km._form_frstar(BL)
+            fraux = km._form_fr(loads)
+            frstaraux = km._form_frstar(bodies)
             self._aux_eq = fraux + frstaraux
             self._fr = fr.col_join(fraux)
             self._frstar = frstar.col_join(frstaraux)
-            return (self._fr, self._frstar)
-        else:
-            return (fr, frstar)
+        return (self._fr, self._frstar)
 
-    def linearize(self):
-        """ Method used to generate linearized equations.
-
-        Note that for linearization, it is assumed that time is not perturbed,
-        but only coordinates and positions. The "forcing" vector's jacobian is
-        computed with respect to the state vector in the form [Qi, Qd, Ui, Ud].
-        This is the "f_lin_A" matrix.
-
-        It also finds any non-state dynamicsymbols and computes the jacobian of
-        the "forcing" vector with respect to them. This is the "f_lin_B"
-        matrix; if this is empty, an empty matrix is created.
-
-        Consider the following:
-        If our equations are: [M]qudot = f, where [M] is the full mass matrix,
-        qudot is a vector of the deriatives of the coordinates and speeds, and
-        f in the full forcing vector, the linearization process is as follows:
-        [M]qudot = [f_lin_A]qu + [f_lin_B]y, where qu is the state vector,
-        f_lin_A is the jacobian of the full forcing vector with respect to the
-        state vector, f_lin_B is the jacobian of the full forcing vector with
-        respect to any non-speed/coordinate dynamicsymbols which show up in the
-        full forcing vector, and y is a vector of those dynamic symbols (each
-        column in f_lin_B corresponds to a row of the y vector, each of which
-        is a non-speed/coordinate dynamicsymbol).
-
-        To get the traditional state-space A and B matrix, you need to multiply
-        the f_lin_A and f_lin_B matrices by the inverse of the mass matrix.
-        Caution needs to be taken when inverting large symbolic matrices;
-        substituting in numerical values before inverting will work better.
-
-        A tuple of (f_lin_A, f_lin_B, other_dynamicsymbols) is returned.
-
-        """
-
-        if (self._fr is None) or (self._frstar is None):
-            raise ValueError('Need to compute Fr, Fr* first.')
-
-        # Note that this is now unneccessary, and it should never be
-        # encountered; I still think it should be in here in case the user
-        # manually sets these matrices incorrectly.
-        for i in self._q:
-            if self._k_kqdot.diff(i) != 0 * self._k_kqdot:
-                raise ValueError('Matrix K_kqdot must not depend on any q.')
-
-        t = dynamicsymbols._t
-        uaux = self._uaux
-        uauxdot = [diff(i, t) for i in uaux]
-        # dictionary of auxiliary speeds & derivatives which are equal to zero
-        subdict = dict(list(zip(uaux + uauxdot, [0] * (len(uaux) + len(uauxdot)))))
-
-        # Checking for dynamic symbols outside the dynamic differential
-        # equations; throws error if there is.
-        insyms = set(
-            self._q + self._qdot + self._u + self._udot + uaux + uauxdot)
-        if any(self._find_dynamicsymbols(i, insyms) for i in [self._k_kqdot,
-                                                              self._k_ku,
-                                                              self._f_k,
-                                                              self._k_dnh,
-                                                              self._f_dnh,
-                                                              self._k_d]):
-            raise ValueError('Cannot have dynamicsymbols outside dynamic '
-                             'forcing vector.')
-        other_dyns = list(self._find_dynamicsymbols(self._f_d.subs(subdict),
-                                             insyms))
-
-        # make it canonically ordered so the jacobian is canonical
-        other_dyns.sort(key=default_sort_key)
-
-        for i in other_dyns:
-            if diff(i, dynamicsymbols._t) in other_dyns:
-                raise ValueError('Cannot have derivatives of specified '
-                                 'quantities when linearizing forcing terms.')
-
-        o = len(self._u)  # number of speeds
-        n = len(self._q)  # number of coordinates
-        l = len(self._qdep)  # number of configuration constraints
-        m = len(self._udep)  # number of motion constraints
-        qi = Matrix(self._q[: n - l])  # independent coords
-        qd = Matrix(self._q[n - l: n])  # dependent coords; could be empty
-        ui = Matrix(self._u[: o - m])  # independent speeds
-        ud = Matrix(self._u[o - m: o])  # dependent speeds; could be empty
-        qdot = Matrix(self._qdot)  # time derivatives of coordinates
-
-        # with equations in the form MM udot = forcing, expand that to:
-        # MM_full [q,u].T = forcing_full. This combines coordinates and
-        # speeds together for the linearization, which is necessary for the
-        # linearization process, due to dependent coordinates. f1 is the rows
-        # from the kinematic differential equations, f2 is the rows from the
-        # dynamic differential equations (and differentiated non-holonomic
-        # constraints).
-        f1 = self._k_ku * Matrix(self._u) + self._f_k
-        f2 = self._f_d
-        # Only want to do this if these matrices have been filled in, which
-        # occurs when there are dependent speeds
-        if m != 0:
-            f2 = self._f_d.col_join(self._f_dnh)
-            fnh = self._f_nh + self._k_nh * Matrix(self._u)
-        f1 = f1.subs(subdict)
-        f2 = f2.subs(subdict)
-        fh = self._f_h.subs(subdict)
-        fku = (self._k_ku * Matrix(self._u)).subs(subdict)
-        fkf = self._f_k.subs(subdict)
-
-        # In the code below, we are applying the chain rule by hand on these
-        # things. All the matrices have been changed into vectors (by
-        # multiplying the dynamic symbols which it is paired with), so we can
-        # take the jacobian of them. The basic operation is take the jacobian
-        # of the f1, f2 vectors wrt all of the q's and u's. f1 is a function of
-        # q, u, and t; f2 is a function of q, qdot, u, and t. In the code
-        # below, we are not considering perturbations in t. So if f1 is a
-        # function of the q's, u's but some of the q's or u's could be
-        # dependent on other q's or u's (qd's might be dependent on qi's, ud's
-        # might be dependent on ui's or qi's), so what we do is take the
-        # jacobian of the f1 term wrt qi's and qd's, the jacobian wrt the qd's
-        # gets multiplied by the jacobian of qd wrt qi, this is extended for
-        # the ud's as well. dqd_dqi is computed by taking a taylor expansion of
-        # the holonomic constraint equations about q*, treating q* - q as dq,
-        # seperating into dqd (depedent q's) and dqi (independent q's) and the
-        # rearranging for dqd/dqi. This is again extended for the speeds.
-
-        # First case: configuration and motion constraints
-        if (l != 0) and (m != 0):
-            fh_jac_qi = fh.jacobian(qi)
-            fh_jac_qd = fh.jacobian(qd)
-            fnh_jac_qi = fnh.jacobian(qi)
-            fnh_jac_qd = fnh.jacobian(qd)
-            fnh_jac_ui = fnh.jacobian(ui)
-            fnh_jac_ud = fnh.jacobian(ud)
-            fku_jac_qi = fku.jacobian(qi)
-            fku_jac_qd = fku.jacobian(qd)
-            fku_jac_ui = fku.jacobian(ui)
-            fku_jac_ud = fku.jacobian(ud)
-            fkf_jac_qi = fkf.jacobian(qi)
-            fkf_jac_qd = fkf.jacobian(qd)
-            f1_jac_qi = f1.jacobian(qi)
-            f1_jac_qd = f1.jacobian(qd)
-            f1_jac_ui = f1.jacobian(ui)
-            f1_jac_ud = f1.jacobian(ud)
-            f2_jac_qi = f2.jacobian(qi)
-            f2_jac_qd = f2.jacobian(qd)
-            f2_jac_ui = f2.jacobian(ui)
-            f2_jac_ud = f2.jacobian(ud)
-            f2_jac_qdot = f2.jacobian(qdot)
-
-            dqd_dqi = - self._mat_inv_mul(fh_jac_qd, fh_jac_qi)
-            dud_dqi = self._mat_inv_mul(fnh_jac_ud, (fnh_jac_qd *
-                                        dqd_dqi - fnh_jac_qi))
-            dud_dui = - self._mat_inv_mul(fnh_jac_ud, fnh_jac_ui)
-            dqdot_dui = - self._k_kqdot.inv() * (fku_jac_ui +
-                                                fku_jac_ud * dud_dui)
-            dqdot_dqi = - self._k_kqdot.inv() * (fku_jac_qi + fkf_jac_qi +
-                    (fku_jac_qd + fkf_jac_qd) * dqd_dqi + fku_jac_ud * dud_dqi)
-            f1_q = f1_jac_qi + f1_jac_qd * dqd_dqi + f1_jac_ud * dud_dqi
-            f1_u = f1_jac_ui + f1_jac_ud * dud_dui
-            f2_q = (f2_jac_qi + f2_jac_qd * dqd_dqi + f2_jac_qdot * dqdot_dqi +
-                    f2_jac_ud * dud_dqi)
-            f2_u = f2_jac_ui + f2_jac_ud * dud_dui + f2_jac_qdot * dqdot_dui
-        # Second case: configuration constraints only
-        elif l != 0:
-            dqd_dqi = - self._mat_inv_mul(fh.jacobian(qd), fh.jacobian(qi))
-            dqdot_dui = - self._k_kqdot.inv() * fku.jacobian(ui)
-            dqdot_dqi = - self._k_kqdot.inv() * (fku.jacobian(qi) +
-                fkf.jacobian(qi) + (fku.jacobian(qd) + fkf.jacobian(qd)) *
-                dqd_dqi)
-            f1_q = (f1.jacobian(qi) + f1.jacobian(qd) * dqd_dqi)
-            f1_u = f1.jacobian(ui)
-            f2_jac_qdot = f2.jacobian(qdot)
-            f2_q = (f2.jacobian(qi) + f2.jacobian(qd) * dqd_dqi +
-                    f2.jac_qdot * dqdot_dqi)
-            f2_u = f2.jacobian(ui) + f2_jac_qdot * dqdot_dui
-        # Third case: motion constraints only
-        elif m != 0:
-            dud_dqi = self._mat_inv_mul(fnh.jacobian(ud), - fnh.jacobian(qi))
-            dud_dui = - self._mat_inv_mul(fnh.jacobian(ud), fnh.jacobian(ui))
-            dqdot_dui = - self._k_kqdot.inv() * (fku.jacobian(ui) +
-                                                fku.jacobian(ud) * dud_dui)
-            dqdot_dqi = - self._k_kqdot.inv() * (fku.jacobian(qi) +
-                    fkf.jacobian(qi) + fku.jacobian(ud) * dud_dqi)
-            f1_jac_ud = f1.jacobian(ud)
-            f2_jac_qdot = f2.jacobian(qdot)
-            f2_jac_ud = f2.jacobian(ud)
-            f1_q = f1.jacobian(qi) + f1_jac_ud * dud_dqi
-            f1_u = f1.jacobian(ui) + f1_jac_ud * dud_dui
-            f2_q = (f2.jacobian(qi) + f2_jac_qdot * dqdot_dqi + f2_jac_ud
-                    * dud_dqi)
-            f2_u = (f2.jacobian(ui) + f2_jac_ud * dud_dui + f2_jac_qdot *
-                    dqdot_dui)
-        # Fourth case: No constraints
-        else:
-            dqdot_dui = - self._k_kqdot.inv() * fku.jacobian(ui)
-            dqdot_dqi = - self._k_kqdot.inv() * (fku.jacobian(qi) +
-                    fkf.jacobian(qi))
-            f1_q = f1.jacobian(qi)
-            f1_u = f1.jacobian(ui)
-            f2_jac_qdot = f2.jacobian(qdot)
-            f2_q = f2.jacobian(qi) + f2_jac_qdot * dqdot_dqi
-            f2_u = f2.jacobian(ui) + f2_jac_qdot * dqdot_dui
-        f_lin_A = -(f1_q.row_join(f1_u)).col_join(f2_q.row_join(f2_u))
-        if other_dyns:
-            f1_oths = f1.jacobian(other_dyns)
-            f2_oths = f2.jacobian(other_dyns)
-            f_lin_B = -f1_oths.col_join(f2_oths)
-        else:
-            f_lin_B = Matrix([])
-        return (f_lin_A, f_lin_B, Matrix(other_dyns))
+    def _form_eoms(self):
+        fr, frstar = self.kanes_equations(self.bodies, self.loads)
+        return fr + frstar
 
     def rhs(self, inv_method=None):
-        """ Returns the system's equations of motion in first order form.
+        """Returns the system's equations of motion in first order form. The
+        output is the right hand side of::
 
-        The output of this will be the right hand side of:
+           x' = |q'| =: f(q, u, r, p, t)
+                |u'|
 
-        [qdot, udot].T = f(q, u, t)
-
-        Or, the equations of motion in first order form.  The right hand side
-        is what is needed by most numerical ODE integrators.
+        The right hand side is what is needed by most numerical ODE
+        integrators.
 
         Parameters
         ==========
 
         inv_method : str
-            The specific sympy inverse matrix calculation method to use.
+            The specific sympy inverse matrix calculation method to use. For a
+            list of valid methods, see
+            :meth:`~sympy.matrices.matrixbase.MatrixBase.inv`
 
         """
+        rhs = zeros(len(self.q) + len(self.u), 1)
+        kdes = self.kindiffdict()
+        for i, q_i in enumerate(self.q):
+            rhs[i] = kdes[q_i.diff()]
+
         if inv_method is None:
-            self._rhs = self._mat_inv_mul(self.mass_matrix_full,
-                                          self.forcing_full)
+            rhs[len(self.q):, 0] = self.mass_matrix.LUsolve(self.forcing)
         else:
-            self._rhs = (self.mass_matrix_full.inv(inv_method,
-                         try_block_diag=True) * self.forcing_full)
-        return self._rhs
+            rhs[len(self.q):, 0] = (self.mass_matrix.inv(inv_method,
+                                                         try_block_diag=True) *
+                                    self.forcing)
+
+        return rhs
+
+    def kindiffdict(self):
+        """Returns a dictionary mapping q' to u."""
+        if not self._qdot_u_map:
+            raise AttributeError('Create an instance of KanesMethod with '
+                    'kinematic differential equations to use this method.')
+        return self._qdot_u_map
 
     @property
     def auxiliary_eqs(self):
-        if (self._fr is None) or (self._frstar is None):
+        """A matrix containing the auxiliary equations."""
+        if not self._fr or not self._frstar:
             raise ValueError('Need to compute Fr, Fr* first.')
-        if self._uaux == []:
+        if not self._uaux:
             raise ValueError('No auxiliary speeds have been declared.')
         return self._aux_eq
 
     @property
+    def mass_matrix_kin(self):
+        r"""The kinematic "mass matrix" $\mathbf{k_{k\dot{q}}}$ of the system."""
+        return self._k_kqdot if self.explicit_kinematics else self._k_kqdot_implicit
+
+    @property
+    def forcing_kin(self):
+        """The kinematic "forcing vector" of the system."""
+        if self.explicit_kinematics:
+            return -(self._k_ku * Matrix(self.u) + self._f_k)
+        else:
+            return -(self._k_ku_implicit * Matrix(self.u) + self._f_k_implicit)
+
+    @property
     def mass_matrix(self):
-        # Returns the mass matrix, which is augmented by the differentiated non
-        # holonomic equations if necessary
-        if (self._frstar is None) & (self._fr is None):
+        """The mass matrix of the system."""
+        if not self._fr or not self._frstar:
             raise ValueError('Need to compute Fr, Fr* first.')
         return Matrix([self._k_d, self._k_dnh])
 
     @property
-    def mass_matrix_full(self):
-        # Returns the mass matrix from above, augmented by kin diff's k_kqdot
-        if (self._frstar is None) & (self._fr is None):
-            raise ValueError('Need to compute Fr, Fr* first.')
-        o = len(self._u)
-        n = len(self._q)
-        return ((self._k_kqdot).row_join(zeros(n, o))).col_join((zeros(o,
-                n)).row_join(self.mass_matrix))
-
-    @property
     def forcing(self):
-        # Returns the forcing vector, which is augmented by the differentiated
-        # non holonomic equations if necessary
-        if (self._frstar is None) & (self._fr is None):
+        """The forcing vector of the system."""
+        if not self._fr or not self._frstar:
             raise ValueError('Need to compute Fr, Fr* first.')
         return -Matrix([self._f_d, self._f_dnh])
 
     @property
-    def forcing_full(self):
-        # Returns the forcing vector, which is augmented by the differentiated
-        # non holonomic equations if necessary
-        if (self._frstar is None) & (self._fr is None):
+    def mass_matrix_full(self):
+        """The mass matrix of the system, augmented by the kinematic
+        differential equations in explicit or implicit form."""
+        if not self._fr or not self._frstar:
             raise ValueError('Need to compute Fr, Fr* first.')
-        f1 = self._k_ku * Matrix(self._u) + self._f_k
-        return -Matrix([f1, self._f_d, self._f_dnh])
+        o, n = len(self.u), len(self.q)
+        return (self.mass_matrix_kin.row_join(zeros(n, o))).col_join(
+            zeros(o, n).row_join(self.mass_matrix))
+
+    @property
+    def forcing_full(self):
+        """The forcing vector of the system, augmented by the kinematic
+        differential equations in explicit or implicit form."""
+        return Matrix([self.forcing_kin, self.forcing])
+
+    @property
+    def q(self):
+        """Column matrix of the independent generalized coordinates followed by
+        the dependent coordinates."""
+        return self._q
+
+    @property
+    def u(self):
+        """Column matrix of the independent generalized speeds followed by the
+        dependent generalized speeds."""
+        return self._u
+
+    @property
+    def bodylist(self):
+        """List of particles and/or rigid bodies in the system.
+
+        .. deprecated:: 1.15
+
+           KanesMethod now uses consistent attribute names among all methods
+           classes. Use :py:attr:`~.KanesMethod.bodies` instead.
+
+        """
+        sympy_deprecation_warning(
+            ("'bodylist' is deprecated, use 'bodies' instead. KanesMethod now"
+             " uses consistent attribute names among all methods classes."),
+            deprecated_since_version='1.15',
+            active_deprecations_target='deprecated-mechanics-bodyforcelist',
+        )
+        return self._bodylist
+
+    @property
+    def forcelist(self):
+        """List of (Point, Vector) or (ReferenceFrame, Vector) tuples
+        representing forces and torques applied to the system.
+
+        .. deprecated:: 1.15
+
+           KanesMethod now uses consistent attribute names among all methods
+           classes. Use :py:attr:`~.KanesMethod.loads` instead.
+
+        """
+        sympy_deprecation_warning(
+            ("'forcelist' is deprecated, use 'loads' instead. KanesMethod"
+             " now uses consistent attribute names among all methods classes."),
+            deprecated_since_version='1.15',
+            active_deprecations_target='deprecated-mechanics-bodyforcelist',
+        )
+        return self._forcelist
+
+    @property
+    def bodies(self):
+        """List of :py:class:`~.Particle`, :py:class:`~.RigidBody`, or
+        :py:class:`~.Body` objects that make up the multibody system."""
+        return self._bodylist
+
+    @property
+    def loads(self):
+        """List of :py:class:`~.Force`, :py:class:`~.Torque`,
+        tuple(:py:class:`~.vector.point.Point`,
+        :py:class:`~.physics.vector.vector.Vector`),
+        tuple(:py:class:`~.ReferenceFrame`,
+        :py:class:`~.physics.vector.vector.Vector`) loads applied to multibody
+        system."""
+        return self._forcelist
+
+    @property
+    def frame(self):
+        """Inertial reference frame that the equations of motion were
+        formulated with respect to."""
+        return self._inertial
+
+    @property
+    def holonomic_constraints(self):
+        """Column matrix holonomic configuration constraint residuals."""
+        return self._f_h
+
+    @property
+    def nonholonomic_constraints(self):
+        """Column matrix of nonholonomic constraint residuals."""
+        return self._nonholonomic_constraints
+
+    @property
+    def velocity_constraints(self):
+        """Column matrix of velocity constraint residuals. Time differentiated
+        holonomic constraint residuals stacked on top of the nonholonomic
+        constraint residuals."""
+        return self._velocity_constraints
+
+    @property
+    def acceleration_constraints(self):
+        """Column matrix of acceleration constraint residuals."""
+        return self._acceleration_constraints

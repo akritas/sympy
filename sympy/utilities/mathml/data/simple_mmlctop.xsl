@@ -261,7 +261,7 @@ CONSTANT and SYMBOL ELEMENTS
     </xsl:when>
     <xsl:when test="($SEM_SW=$SEM_XREF or $SEM_SW=$SEM_XREF_EXT) and @id">
       <xsl:choose>
-        <xsl:when test="self::sematics">
+        <xsl:when test="self::semantics">
           <xsl:copy>
             <xsl:copy-of select="@*"/>
             <xsl:attribute name="xref">
@@ -1165,7 +1165,7 @@ CONSTANT and SYMBOL ELEMENTS
                          coth[1] | arcsin[1] | arccos[1] |
                          arctan[1] | arcsec[1] | arccsc[1] |
                          arccot[1] | arcsinh[1] | arccosh[1] |
-                         arctanh[1] | arcsech[1] | arccsch [1] |
+                         arctanh[1] | arcsech[1] | arccsch[1] |
                          arccoth[1]]">
       <xsl:apply-templates select="*[2]" mode = "semantics"/>
     </xsl:when>

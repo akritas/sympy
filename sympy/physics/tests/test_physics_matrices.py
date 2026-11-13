@@ -1,5 +1,10 @@
-from sympy.physics.matrices import msigma, mgamma, minkowski_tensor, pat_matrix
-from sympy import zeros, eye, I, Matrix
+from __future__ import annotations
+from sympy.physics.matrices import msigma, mgamma, minkowski_tensor, pat_matrix, mdft
+from sympy.core.numbers import (I, Rational)
+from sympy.core.singleton import S
+from sympy.functions.elementary.miscellaneous import sqrt
+from sympy.matrices.dense import (Matrix, eye, zeros)
+from sympy.testing.pytest import warns_deprecated_sympy
 
 
 def test_parallel_axis_theorem():
@@ -67,3 +72,14 @@ def test_Dirac():
 
     assert mgamma(5, True) == \
         mgamma(0, True)*mgamma(1, True)*mgamma(2, True)*mgamma(3, True)*I
+
+def test_mdft():
+    with warns_deprecated_sympy():
+        assert mdft(1) == Matrix([[1]])
+    with warns_deprecated_sympy():
+        assert mdft(2) == 1/sqrt(2)*Matrix([[1,1],[1,-1]])
+    with warns_deprecated_sympy():
+        assert mdft(4) == Matrix([[S.Half,  S.Half,  S.Half, S.Half],
+                                  [S.Half, -I/2, Rational(-1,2),  I/2],
+                                  [S.Half, Rational(-1,2),  S.Half, Rational(-1,2)],
+                                  [S.Half,  I/2, Rational(-1,2), -I/2]])

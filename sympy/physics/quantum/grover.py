@@ -7,11 +7,15 @@ Todo:
   qubit states, not just one.
 * Implement _represent_ZGate in OracleGate
 """
+from __future__ import annotations
 
-from __future__ import print_function, division
-
-from sympy import floor, pi, sqrt, sympify
-from sympy.core.compatibility import u
+from sympy.core.numbers import pi
+from sympy.core.sympify import sympify
+from sympy.core.basic import Atom
+from sympy.functions.elementary.integers import floor
+from sympy.functions.elementary.miscellaneous import sqrt
+from sympy.matrices.dense import eye
+from sympy.core.numbers import NegativeOne
 from sympy.physics.quantum.qapply import qapply
 from sympy.physics.quantum.qexpr import QuantumError
 from sympy.physics.quantum.hilbert import ComplexSpace
@@ -54,7 +58,23 @@ def superposition_basis(nqubits):
     """
 
     amp = 1/sqrt(2**nqubits)
-    return sum([amp*IntQubit(n, nqubits) for n in range(2**nqubits)])
+    return sum(amp*IntQubit(n, nqubits=nqubits) for n in range(2**nqubits))
+
+class OracleGateFunction(Atom):
+    """Wrapper for python functions used in `OracleGate`s"""
+
+    def __new__(cls, function):
+        if not callable(function):
+            raise TypeError('Callable expected, got: %r' % function)
+        obj = Atom.__new__(cls)
+        obj.function = function
+        return obj
+
+    def _hashable_content(self):
+        return type(self), self.function
+
+    def __call__(self, *args):
+        return self.function(*args)
 
 
 class OracleGate(Gate):
@@ -89,8 +109,8 @@ class OracleGate(Gate):
         |3>
     """
 
-    gate_name = u('V')
-    gate_name_latex = u('V')
+    gate_name = 'V'
+    gate_name_latex = 'V'
 
     #-------------------------------------------------------------------------
     # Initialization/creation
@@ -98,7 +118,6 @@ class OracleGate(Gate):
 
     @classmethod
     def _eval_args(cls, args):
-        # TODO: args[1] is not a subclass of Basic
         if len(args) != 2:
             raise QuantumError(
                 'Insufficient/excessive arguments to Oracle.  Please ' +
@@ -109,9 +128,11 @@ class OracleGate(Gate):
         if not sub_args[0].is_Integer:
             raise TypeError('Integer expected, got: %r' % sub_args[0])
 
-        if not callable(args[1]):
-            raise TypeError('Callable expected, got: %r' % args[1])
-        return (sub_args[0], args[1])
+        function = args[1]
+        if not isinstance(function, OracleGateFunction):
+            function = OracleGateFunction(function)
+
+        return (sub_args[0], function)
 
     @classmethod
     def _eval_hilbert_space(cls, args):
@@ -168,9 +189,16 @@ class OracleGate(Gate):
     #-------------------------------------------------------------------------
 
     def _represent_ZGate(self, basis, **options):
-        raise NotImplementedError(
-            "Represent for the Oracle has not been implemented yet"
-        )
+        """
+        Represent the OracleGate in the computational basis.
+        """
+        nbasis = 2**self.nqubits  # compute it only once
+        matrixOracle = eye(nbasis)
+        # Flip the sign given the output of the oracle function
+        for i in range(nbasis):
+            if self.search_function(IntQubit(i, nqubits=self.nqubits)):
+                matrixOracle[i, i] = NegativeOne()
+        return matrixOracle
 
 
 class WGate(Gate):
@@ -187,8 +215,8 @@ class WGate(Gate):
 
     """
 
-    gate_name = u('W')
-    gate_name_latex = u('W')
+    gate_name = 'W'
+    gate_name_latex = 'W'
 
     @classmethod
     def _eval_args(cls, args):

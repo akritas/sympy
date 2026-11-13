@@ -1,7 +1,8 @@
+from __future__ import annotations
 from sympy.core.facts import (deduce_alpha_implications,
         apply_beta_to_alpha_route, rules_2prereq, FactRules, FactKB)
 from sympy.core.logic import And, Not
-from sympy.utilities.pytest import XFAIL, raises
+from sympy.testing.pytest import raises
 
 T = True
 F = False
@@ -11,25 +12,26 @@ U = None
 def test_deduce_alpha_implications():
     def D(i):
         I = deduce_alpha_implications(i)
-        P = rules_2prereq(dict(
-            ((k, True), set([(v, True) for v in S])) for k, S in I.items()))
+        P = rules_2prereq({
+            (k, True): {(v, True) for v in S} for k, S in I.items()})
         return I, P
 
     # transitivity
     I, P = D([('a', 'b'), ('b', 'c')])
-    assert I == {'a': set(['b', 'c']), 'b': set(['c'])}
-    assert P == {'b': set(['a']), 'c': set(['a', 'b'])}
+    assert I == {'a': {'b', 'c'}, 'b': {'c'}, Not('b'):
+        {Not('a')}, Not('c'): {Not('a'), Not('b')}}
+    assert P == {'a': {'b', 'c'}, 'b': {'a', 'c'}, 'c': {'a', 'b'}}
 
-    # see if the output does not contain repeated implications
+    # Duplicate entry
     I, P = D([('a', 'b'), ('b', 'c'), ('b', 'c')])
-    assert I == {'a': set(['b', 'c']), 'b': set(['c'])}
-    assert P == {'b': set(['a']), 'c': set(['a', 'b'])}
+    assert I == {'a': {'b', 'c'}, 'b': {'c'}, Not('b'): {Not('a')}, Not('c'): {Not('a'), Not('b')}}
+    assert P == {'a': {'b', 'c'}, 'b': {'a', 'c'}, 'c': {'a', 'b'}}
 
     # see if it is tolerant to cycles
     assert D([('a', 'a'), ('a', 'a')]) == ({}, {})
     assert D([('a', 'b'), ('b', 'a')]) == (
-        {'a': set(['b']), 'b': set(['a'])},
-        {'a': set(['b']), 'b': set(['a'])})
+        {'a': {'b'}, 'b': {'a'}, Not('a'): {Not('b')}, Not('b'): {Not('a')}},
+        {'a': {'b'}, 'b': {'a'}})
 
     # see if it catches inconsistency
     raises(ValueError, lambda: D([('a', Not('a'))]))
@@ -37,11 +39,33 @@ def test_deduce_alpha_implications():
     raises(ValueError, lambda: D([('a', 'b'), ('b', 'c'), ('b', 'na'),
            ('na', Not('a'))]))
 
+    # see if it handles implications with negations
+    I, P = D([('a', Not('b')), ('c', 'b')])
+    assert I == {'a': {Not('b'), Not('c')}, 'b': {Not('a')}, 'c': {'b', Not('a')}, Not('b'): {Not('c')}}
+    assert P == {'a': {'b', 'c'}, 'b': {'a', 'c'}, 'c': {'a', 'b'}}
+    I, P = D([(Not('a'), 'b'), ('a', 'c')])
+    assert I == {'a': {'c'}, Not('a'): {'b'}, Not('b'): {'a',
+    'c'}, Not('c'): {Not('a'), 'b'},}
+    assert P == {'a': {'b', 'c'}, 'b': {'a', 'c'}, 'c': {'a', 'b'}}
+
+
+    # Long deductions
+    I, P = D([('a', 'b'), ('b', 'c'), ('c', 'd'), ('d', 'e')])
+    assert I == {'a': {'b', 'c', 'd', 'e'}, 'b': {'c', 'd', 'e'},
+        'c': {'d', 'e'}, 'd': {'e'}, Not('b'): {Not('a')},
+        Not('c'): {Not('a'), Not('b')}, Not('d'): {Not('a'), Not('b'),
+            Not('c')}, Not('e'): {Not('a'), Not('b'), Not('c'), Not('d')}}
+    assert P == {'a': {'b', 'c', 'd', 'e'}, 'b': {'a', 'c', 'd',
+        'e'}, 'c': {'a', 'b', 'd', 'e'}, 'd': {'a', 'b', 'c', 'e'},
+        'e': {'a', 'b', 'c', 'd'}}
+
     # something related to real-world
     I, P = D([('rat', 'real'), ('int', 'rat')])
 
-    assert I == {'int': set(['rat', 'real']), 'rat': set(['real'])}
-    assert P == {'rat': set(['int']), 'real': set(['int', 'rat'])}
+    assert I == {'int': {'rat', 'real'}, 'rat': {'real'},
+        Not('real'): {Not('rat'), Not('int')}, Not('rat'): {Not('int')}}
+    assert P == {'rat': {'int', 'real'}, 'real': {'int', 'rat'},
+        'int': {'rat', 'real'}}
 
 
 # TODO move me to appropriate place
@@ -53,99 +77,99 @@ def test_apply_beta_to_alpha_route():
         return (set(), [bidx])
 
     # x -> a        &(a,b) -> x     --  x -> a
-    A = {'x': set(['a'])}
+    A = {'x': {'a'}}
     B = [(And('a', 'b'), 'x')]
-    assert APPLY(A, B) == {'x': (set(['a']), []), 'a': Q(0), 'b': Q(0)}
+    assert APPLY(A, B) == {'x': ({'a'}, []), 'a': Q(0), 'b': Q(0)}
 
     # x -> a        &(a,!x) -> b    --  x -> a
-    A = {'x': set(['a'])}
+    A = {'x': {'a'}}
     B = [(And('a', Not('x')), 'b')]
-    assert APPLY(A, B) == {'x': (set(['a']), []), Not('x'): Q(0), 'a': Q(0)}
+    assert APPLY(A, B) == {'x': ({'a'}, []), Not('x'): Q(0), 'a': Q(0)}
 
     # x -> a b      &(a,b) -> c     --  x -> a b c
-    A = {'x': set(['a', 'b'])}
+    A = {'x': {'a', 'b'}}
     B = [(And('a', 'b'), 'c')]
     assert APPLY(A, B) == \
-        {'x': (set(['a', 'b', 'c']), []), 'a': Q(0), 'b': Q(0)}
+        {'x': ({'a', 'b', 'c'}, []), 'a': Q(0), 'b': Q(0)}
 
     # x -> a        &(a,b) -> y     --  x -> a [#0]
-    A = {'x': set(['a'])}
+    A = {'x': {'a'}}
     B = [(And('a', 'b'), 'y')]
-    assert APPLY(A, B) == {'x': (set(['a']), [0]), 'a': Q(0), 'b': Q(0)}
+    assert APPLY(A, B) == {'x': ({'a'}, [0]), 'a': Q(0), 'b': Q(0)}
 
     # x -> a b c    &(a,b) -> c     --  x -> a b c
-    A = {'x': set(['a', 'b', 'c'])}
+    A = {'x': {'a', 'b', 'c'}}
     B = [(And('a', 'b'), 'c')]
     assert APPLY(A, B) == \
-        {'x': (set(['a', 'b', 'c']), []), 'a': Q(0), 'b': Q(0)}
+        {'x': ({'a', 'b', 'c'}, []), 'a': Q(0), 'b': Q(0)}
 
     # x -> a b      &(a,b,c) -> y   --  x -> a b [#0]
-    A = {'x': set(['a', 'b'])}
+    A = {'x': {'a', 'b'}}
     B = [(And('a', 'b', 'c'), 'y')]
     assert APPLY(A, B) == \
-        {'x': (set(['a', 'b']), [0]), 'a': Q(0), 'b': Q(0), 'c': Q(0)}
+        {'x': ({'a', 'b'}, [0]), 'a': Q(0), 'b': Q(0), 'c': Q(0)}
 
     # x -> a b      &(a,b) -> c     --  x -> a b c d
     # c -> d                            c -> d
-    A = {'x': set(['a', 'b']), 'c': set(['d'])}
+    A = {'x': {'a', 'b'}, 'c': {'d'}}
     B = [(And('a', 'b'), 'c')]
-    assert APPLY(A, B) == {'x': (set(['a', 'b', 'c', 'd']), []),
-        'c': (set(['d']), []), 'a': Q(0), 'b': Q(0)}
+    assert APPLY(A, B) == {'x': ({'a', 'b', 'c', 'd'}, []),
+        'c': ({'d'}, []), 'a': Q(0), 'b': Q(0)}
 
     # x -> a b      &(a,b) -> c     --  x -> a b c d e
     # c -> d        &(c,d) -> e         c -> d e
-    A = {'x': set(['a', 'b']), 'c': set(['d'])}
+    A = {'x': {'a', 'b'}, 'c': {'d'}}
     B = [(And('a', 'b'), 'c'), (And('c', 'd'), 'e')]
-    assert APPLY(A, B) == {'x': (set(['a', 'b', 'c', 'd', 'e']), []),
-        'c': (set(['d', 'e']), []), 'a': Q(0), 'b': Q(0), 'd': Q(1)}
+    assert APPLY(A, B) == {'x': ({'a', 'b', 'c', 'd', 'e'}, []),
+        'c': ({'d', 'e'}, []), 'a': Q(0), 'b': Q(0), 'd': Q(1)}
 
     # x -> a b      &(a,y) -> z     --  x -> a b y z
     #               &(a,b) -> y
-    A = {'x': set(['a', 'b'])}
+    A = {'x': {'a', 'b'}}
     B = [(And('a', 'y'), 'z'), (And('a', 'b'), 'y')]
-    assert APPLY(A, B) == {'x': (set(['a', 'b', 'y', 'z']), []),
+    assert APPLY(A, B) == {'x': ({'a', 'b', 'y', 'z'}, []),
         'a': (set(), [0, 1]), 'y': Q(0), 'b': Q(1)}
 
     # x -> a b      &(a,!b) -> c    --  x -> a b
-    A = {'x': set(['a', 'b'])}
+    A = {'x': {'a', 'b'}}
     B = [(And('a', Not('b')), 'c')]
     assert APPLY(A, B) == \
-        {'x': (set(['a', 'b']), []), 'a': Q(0), Not('b'): Q(0)}
+        {'x': ({'a', 'b'}, []), 'a': Q(0), Not('b'): Q(0)}
 
     # !x -> !a !b   &(!a,b) -> c    --  !x -> !a !b
-    A = {Not('x'): set([Not('a'), Not('b')])}
+    A = {Not('x'): {Not('a'), Not('b')}}
     B = [(And(Not('a'), 'b'), 'c')]
     assert APPLY(A, B) == \
-        {Not('x'): (set([Not('a'), Not('b')]), []), Not('a'): Q(0), 'b': Q(0)}
+        {Not('x'): ({Not('a'), Not('b')}, []), Not('a'): Q(0), 'b': Q(0)}
 
     # x -> a b      &(b,c) -> !a    --  x -> a b
-    A = {'x': set(['a', 'b'])}
+    A = {'x': {'a', 'b'}}
     B = [(And('b', 'c'), Not('a'))]
-    assert APPLY(A, B) == {'x': (set(['a', 'b']), []), 'b': Q(0), 'c': Q(0)}
+    assert APPLY(A, B) == {'x': ({'a', 'b'}, []), 'b': Q(0), 'c': Q(0)}
 
     # x -> a b      &(a, b) -> c    --  x -> a b c p
     # c -> p a
-    A = {'x': set(['a', 'b']), 'c': set(['p', 'a'])}
+    A = {'x': {'a', 'b'}, 'c': {'p', 'a'}}
     B = [(And('a', 'b'), 'c')]
-    assert APPLY(A, B) == {'x': (set(['a', 'b', 'c', 'p']), []),
-        'c': (set(['p', 'a']), []), 'a': Q(0), 'b': Q(0)}
+    assert APPLY(A, B) == {'x': ({'a', 'b', 'c', 'p'}, []),
+        'c': ({'p', 'a'}, []), 'a': Q(0), 'b': Q(0)}
 
 
 def test_FactRules_parse():
     f = FactRules('a -> b')
-    assert f.prereq == {'b': set(['a']), 'a': set(['b'])}
+    assert f.prereq == {'b': {'a'}, 'a': {'b'}}
 
     f = FactRules('a -> !b')
-    assert f.prereq == {'b': set(['a']), 'a': set(['b'])}
+    assert f.prereq == {'b': {'a'}, 'a': {'b'}}
 
     f = FactRules('!a -> b')
-    assert f.prereq == {'b': set(['a']), 'a': set(['b'])}
+    assert f.prereq == {'b': {'a'}, 'a': {'b'}}
 
     f = FactRules('!a -> !b')
-    assert f.prereq == {'b': set(['a']), 'a': set(['b'])}
+    assert f.prereq == {'b': {'a'}, 'a': {'b'}}
 
     f = FactRules('!z == nz')
-    assert f.prereq == {'z': set(['nz']), 'nz': set(['z'])}
+    assert f.prereq == {'z': {'nz'}, 'nz': {'z'}}
 
 
 def test_FactRules_parse2():

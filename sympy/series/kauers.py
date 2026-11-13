@@ -1,9 +1,4 @@
-from __future__ import print_function, division
-
-from sympy import expand
-from sympy import diff
-from sympy import Sum
-
+from __future__ import annotations
 def finite_diff(expression, variable, increment=1):
     """
     Takes as input a polynomial expression and the variable used to construct
@@ -12,10 +7,10 @@ def finite_diff(expression, variable, increment=1):
     other than one supply it as a third argument.
 
     Examples
-    =========
-    >>> from sympy.abc import x, y, z, k, n
+    ========
+
+    >>> from sympy.abc import x, y, z
     >>> from sympy.series.kauers import finite_diff
-    >>> from  sympy import Sum
     >>> finite_diff(x**2, x)
     2*x + 1
     >>> finite_diff(y**3 + 2*y**2 + 3*y + 4, y)
@@ -38,6 +33,7 @@ def finite_diff_kauers(sum):
 
     Examples
     ========
+
     >>> from sympy.series.kauers import finite_diff_kauers
     >>> from sympy import Sum
     >>> from sympy.abc import x, y, m, n, k

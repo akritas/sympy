@@ -42,94 +42,6 @@ the current implementation, to work in rings like `k[X][Y]`. This would create
 even more layers. For this reason, working in the isomorphic ring `k[X, Y]`
 is preferred.
 
-Domains
-=======
-
-.. currentmodule:: sympy.polys.domains
-
-Here we document the various implemented ground domains. There are three
-types: abstract domains, concrete domains, and "implementation domains".
-Abstract domains cannot be (usefully) instantiated at all, and just collect
-together functionality shared by many other domains. Concrete domains are
-those meant to be instantiated and used in the polynomial manipulation
-algorithms. In some cases, there are various possible ways to implement the
-data type the domain provides. For example, depending on what libraries are
-available on the system, the integers are implemented either using the python
-built-in integers, or using gmpy. Note that various aliases are created
-automatically depending on the libraries available. As such e.g. ``ZZ`` always
-refers to the most efficient implementation of the integer ring available.
-
-Abstract Domains
-****************
-
-.. autoclass:: sympy.polys.domains.domain.Domain
-   :members:
-
-.. autoclass:: sympy.polys.domains.field.Field
-   :members:
-
-.. autoclass:: sympy.polys.domains.ring.Ring
-   :members:
-
-.. autoclass:: sympy.polys.domains.simpledomain.SimpleDomain
-   :members:
-
-.. autoclass:: sympy.polys.domains.compositedomain.CompositeDomain
-   :members:
-
-Concrete Domains
-****************
-
-.. autoclass:: FiniteField
-   :members:
-
-.. autoclass:: IntegerRing
-   :members:
-
-.. autoclass:: PolynomialRing
-   :members:
-
-.. autoclass:: RationalField
-   :members:
-
-.. autoclass:: AlgebraicField
-   :members:
-
-.. autoclass:: FractionField
-   :members:
-
-.. autoclass:: RealField
-   :members:
-
-.. autoclass:: ExpressionDomain
-   :members:
-
-Implementation Domains
-**********************
-
-.. autoclass:: PythonFiniteField
-.. autoclass:: GMPYFiniteField
-
-.. autoclass:: PythonIntegerRing
-.. autoclass:: GMPYIntegerRing
-
-.. autoclass:: PythonRationalField
-.. autoclass:: GMPYRationalField
-
-Level One
-=========
-
-.. currentmodule:: sympy.polys.polyclasses
-
-.. autoclass:: DMP
-   :members:
-
-.. autoclass:: DMF
-   :members:
-
-.. autoclass:: ANP
-   :members:
-
 Level Zero
 ==========
 
@@ -138,7 +50,7 @@ Level zero contains the bulk code of the polynomial manipulation module.
 Manipulation of dense, multivariate polynomials
 ***********************************************
 
-These functions can be used to manipulate polynomials in `K[X_0, \dots, X_u]`.
+These functions can be used to manipulate polynomials in `K[X_0, \ldots, X_u]`.
 Functions for manipulating multivariate polynomials in the dense representation
 have the prefix ``dmp_``. Functions which only apply to univariate polynomials
 (i.e. `u = 0`)
@@ -151,6 +63,19 @@ may be slightly more efficient.)
 **Basic manipulation:**
 
 .. currentmodule:: sympy.polys.densebasic
+
+.. py:class:: dup
+.. py:class:: dmp
+.. py:class:: idmp
+.. py:class:: dmp_tup
+.. py:class:: monom
+
+The ``dup`` representation is a list of coefficients that are themselves domain
+elements. The ``dmp`` type represents dense, multivariate polynomials
+recursively as a list of lists. See :ref:`polys-domainsintro` for an
+introductory explanation of the domain system and the ``dup`` and ``dmp``
+representations. Many functions are available to manipulate polynomials in the
+``dup`` and ``dmp`` representations. This section lists some of them.
 
 .. autofunction:: dmp_LC
 .. autofunction:: dmp_TC
@@ -196,8 +121,13 @@ may be slightly more efficient.)
 .. autofunction:: dmp_terms_gcd
 .. autofunction:: dmp_list_terms
 .. autofunction:: dmp_apply_pairs
+.. autofunction:: dup_slice
 .. autofunction:: dmp_slice
+.. autofunction:: dup_truncate
 .. autofunction:: dup_random
+.. autofunction:: dup_from_list
+.. autofunction:: dup_pretty
+.. autofunction:: dup_print
 
 **Arithmetic operations:**
 
@@ -219,9 +149,14 @@ may be slightly more efficient.)
 .. autofunction:: dmp_sub
 .. autofunction:: dmp_add_mul
 .. autofunction:: dmp_sub_mul
+.. autofunction:: dup_mul
 .. autofunction:: dmp_mul
+.. autofunction:: dup_series_mul
+.. autofunction:: dup_sqr
 .. autofunction:: dmp_sqr
+.. autofunction:: dup_series_sqr
 .. autofunction:: dmp_pow
+.. autofunction:: dup_series_pow
 .. autofunction:: dmp_pdiv
 .. autofunction:: dmp_prem
 .. autofunction:: dmp_pquo
@@ -263,12 +198,16 @@ may be slightly more efficient.)
 .. autofunction:: dup_scale
 .. autofunction:: dup_shift
 .. autofunction:: dup_transform
+.. autofunction:: dup_compose
 .. autofunction:: dmp_compose
+.. autofunction:: dup_series_compose
 .. autofunction:: dup_decompose
 .. autofunction:: dmp_lift
 .. autofunction:: dup_sign_variations
 .. autofunction:: dmp_clear_denoms
+.. autofunction:: dup_revert
 .. autofunction:: dmp_revert
+.. autofunction:: dup_series_reversion
 
 Manipulation of dense, univariate polynomials with finite field coefficients
 ****************************************************************************
@@ -347,9 +286,9 @@ Manipulation of sparse, distributed polynomials and vectors
 
 Dense representations quickly require infeasible amounts of storage and
 computation time if the number of variables increases. For this reason,
-there is code to manipulate polynomials in a *sparse* representation.
-
-.. TODO: write documentation for new sparse polynomials
+there is code to manipulate polynomials in a *sparse* representation. The Ring
+object and elements are implemented by the classes :py:class:`~.PolyRing` and
+:py:class:`~.PolyElement`.
 
 In commutative algebra, one often studies not only polynomials, but also
 *modules* over polynomial rings. The polynomial manipulation module provides
@@ -357,7 +296,7 @@ rudimentary low-level support for finitely generated free modules. This is
 mainly used for Groebner basis computations (see there), so manipulation
 functions are only provided to the extend needed. They carry the prefix
 ``sdm_``. Note that in examples, the generators of the free module are called
-`f_1, f_2, \dots`.
+`f_1, f_2, \ldots`.
 
 .. currentmodule:: sympy.polys.distributedmodules
 
@@ -383,11 +322,233 @@ Many variants of Euclid's algorithm:
 
 .. currentmodule:: sympy.polys.euclidtools
 
+Classical remainder sequence
+----------------------------
+
+Let `K` be a field, and consider the ring `K[X]` of polynomials in a single
+indeterminate `X` with coefficients in `K`. Given two elements `f` and `g`
+of `K[X]` with `g\neq 0` there are unique polynomials `q` and `r` such that
+`f = qg + r` and `\deg(r) < \deg(g)` or `r = 0`.
+They are denoted by `\mathrm{quo}(f,g)`
+(*quotient*) and `\mathrm{rem}(f,g)` (*remainder*), so we have
+the *division identity*
+
+.. math::
+
+  f = \mathrm{quo}(f,g)g + \mathrm{rem}(f,g).
+
+It follows that every ideal `I` of `K[X]` is a principal ideal, generated by
+any element `\neq 0` of minimum degree (assuming `I` non-zero). In fact,
+if `g` is such a polynomial and `f` is any element of `I`,
+`\mathrm{rem}(f,g)` belongs to `I` as a linear combination of `f` and `g`,
+hence must be zero; therefore `f` is a multiple of `g`.
+
+Using this result it is possible to find a `greatest common
+divisor <https://en.wikipedia.org/wiki/Greatest_common_divisor>`_
+(gcd) of any polynomials `f,g,\ldots` in `K[X]`.
+If `I` is the ideal formed by all linear combinations of the given polynomials
+with coefficients in `K[X]`, and `d` is its generator,
+then every common divisor of the polynomials also divides `d`.
+On the other hand, the given polynomials are multiples of the generator `d`;
+hence `d` is a gcd of the polynomials, denoted `\mathrm{gcd}(f,g,\ldots)`.
+
+An algorithm for the gcd of two polynomials `f` and `g` in `K[X]` can
+now be obtained as follows.
+By the division identity, `r = \mathrm{rem}(f,g)` is in the ideal generated
+by `f` and `g`, as well as `f` is in the ideal generated by `g` and `r`.
+Hence the ideals generated by the pairs `(f,g)` and `(g,r)` are the same.
+Set `f_0 = f`, `f_1 = g`, and define recursively
+`f_i = \mathrm{rem}(f_{i-2},f_{i-1})` for `i\ge 2`.
+The recursion ends after a finite number of steps with `f_{k+1}=0`,
+since the degrees of the polynomials are strictly decreasing.
+By the above remark, all the pairs `(f_{i-1},f_i)` generate the same ideal.
+In particular, the ideal generated by `f` and `g` is generated by `f_k`
+alone as `f_{k+1} = 0`. Hence `d = f_k` is a gcd of `f` and `g`.
+
+The sequence of polynomials `f_0`, `f_1,\ldots, f_k` is called the
+*Euclidean polynomial remainder sequence* determined by `(f,g)` because
+of the analogy with the classical `Euclidean algorithm
+<https://en.wikipedia.org/wiki/Euclidean_algorithm>`_ for the gcd of
+natural numbers.
+
+The algorithm may be extended to obtain an expression for `d` in terms of
+`f` and `g` by using the full division identities
+to write recursively each `f_i` as a linear combination of `f` and `g`.
+This leads to an equation
+
+.. math::
+
+   d = uf + vg\qquad (u,v \in K[X])
+
+analogous to `Bézout's identity
+<https://en.wikipedia.org/wiki/B%C3%A9zout%27s_identity>`_
+in the case of integers.
+
 .. autofunction:: dmp_half_gcdex
 .. autofunction:: dmp_gcdex
 .. autofunction:: dmp_invert
 .. autofunction:: dmp_euclidean_prs
+
+Simplified remainder sequences
+------------------------------
+
+Assume, as is usual, that the coefficient field `K` is
+the field of fractions of an integral domain `A`.
+In this case the coefficients (numerators and denominators)
+of the polynomials in the Euclidean remainder sequence
+tend to grow very fast.
+
+If `A` is a unique factorization domain, the coefficients may be
+reduced by cancelling common factors of numerators and denominators.
+Further reduction is possible noting that a gcd of polynomials in
+`K[X]` is not unique:
+it may be multiplied by any (non-zero) constant factor.
+
+Any polynomial `f` in `K[X]` can be simplified by extracting
+the denominators and common factors of the numerators of its coefficients.
+This yields the representation `f = cF` where `c\in K` is
+the *content* of `f` and `F` is a *primitive* polynomial, i.e.,
+a polynomial in `A[X]` with coprime coefficients.
+
+It is possible to start the algorithm by replacing the given polynomials
+`f` and `g` with their primitive parts. This will only modify
+`\mathrm{rem}(f,g)` by a constant factor.
+Replacing it with its primitive part and continuing recursively
+we obtain all the primitive parts of the polynomials in
+the Euclidean remainder sequence, including the primitive
+`\mathrm{gcd}(f,g)`.
+
+This sequence is the *primitive polynomial remainder sequence*.
+It is an example of *general polynomial remainder sequences* where
+the computed remainders are modified by constant multipliers (or divisors)
+in order to simplify the results.
+
 .. autofunction:: dmp_primitive_prs
+
+Subresultant sequence
+---------------------
+
+The coefficients of the primitive polynomial sequence do not grow
+exceedingly, but the computation of the primitive parts requires
+extra processing effort. Besides, the method only works with fraction fields
+of unique factorization domains, excluding, for example, the general number
+fields.
+
+Collins [Collins67] realized that the so-called *subresultant polynomials*
+of a pair of polynomials also form a generalized remainder sequence.
+The coefficients of these polynomials
+are expressible as determinants in the coefficients of the given
+polynomials. Hence (the logarithm of) their size only grows linearly.
+In addition, if the coefficients of the given polynomials
+are in the subdomain `A`, so are those
+of the subresultant polynomials. This means that the subresultant
+sequence is comparable to the primitive remainder sequence without
+relying on unique factorization in `A`.
+
+To see how subresultants are associated with remainder sequences
+recall that all polynomials `h` in the sequence are linear combinations of
+the given polynomials `f` and `g`
+
+.. math::
+
+   h = uf+vg
+
+with polynomials `u` and `v` in `K[X]`. Moreover, as is seen from the
+extended Euclidean algorithm, the degrees of `u` and `v` are relatively
+low, with limited growth from step to step.
+
+Let `n = \deg(f)`, and `m = \deg(g)`, and assume `n\ge m`.
+If `\deg(h) = j < m`, the coefficients of the powers `X^k` (`k > j`)
+in the products `uf` and `vg` cancel each other. In particular, the
+products must have the same degree, say, `l`.
+Then `\deg(u) = l - n` and `\deg(v) = l - m` with a total of `2l -n - m + 2`
+coefficients to be determined.
+
+On the other hand, the equality `h = uf + vg` implies that `l - j`
+linear combinations of the coefficients are zero, those associated with
+the powers `X^i` (`j < i \leq l`), and one has a given non-zero value,
+namely the leading coefficient of `h`.
+
+To satisfy these `l - j + 1` linear equations the total number of
+coefficients to be determined cannot be lower than `l - j + 1`, in general.
+This leads to the inequality `l \ge n + m - j - 1`.
+Taking `l = n + m - j - 1`, we obtain `\deg(u) = m - j - 1` and
+`\deg(v) = n - j - 1`.
+
+In the case `j = 0` the matrix of the resulting system of linear equations
+is the `Sylvester matrix <https://en.wikipedia.org/wiki/Sylvester_matrix>`_
+`S(f,g)` associated to `f` and `g`,
+an `(n+m)\times (n+m)` matrix with coefficients of `f` and `g` as entries.
+Its determinant is the `resultant <https://en.wikipedia.org/wiki/Resultant>`_
+`\mathrm{res}(f,g)` of the pair `(f,g)`.
+It is non-zero if and only if `f` and `g` are relatively prime.
+
+For any `j` in the interval from `0` to `m` the matrix of the linear system is
+an `(n+m-2j)\times (n+m-2j)` submatrix of the Sylvester matrix.
+Its determinant `s_j(f,g)`
+is called the `j` th *scalar subresultant* of `f` and `g`.
+
+If `s_j(f,g)` is not zero, the associated equation `h = uf + vg` has
+a unique solution where `\deg(h) = j` and the leading coefficient
+of `h` has any given value; the one with leading coefficient
+`s_j(f,g)` is the `j` th *subresultant polynomial* or, briefly,
+*subresultant* of the pair `(f,g)`, and denoted `S_j(f,g)`.
+This choice guarantees that the remainining coefficients
+are also certain subdeterminants of the Sylvester matrix.
+In particular, if `f` and `g` are in `A[X]`, so is `S_j(f,g)` as well.
+This construction of subresultants applies to any `j` between
+`0` and `m` regardless of the value of `s_j(f,g)`; if it is zero, then
+`\deg(S_j(f,g)) < j`.
+
+The properties of subresultants are as follows. Let `n_0 = \deg(f)`,
+`n_1 = \deg(g)`, `n_2, \ldots, n_k` be the decreasing sequence of
+degrees of polynomials in a remainder sequence.
+Let `0 \le j \le n_1`; then
+
+- `s_j(f,g)\ne 0` if and only if `j = n_i` for some `i`.
+
+- `S_j(f,g)\ne 0` if and only if `j = n_i` or `j = n_i - 1` for some `i`.
+
+Normally, `n_{i-1} - n_i = 1` for `1 < i \le k`. If `n_{i-1} - n_i > 1`
+for some `i` (the *abnormal* case), then `S_{n_{i-1}-1}(f,g)` and
+`S_{n_i}(f,g)` are constant multiples of each other.
+Hence either one could be included in the polynomial remainder sequence.
+The former is given by smaller determinants,
+so it is expected to have smaller coefficients.
+
+Collins defined the *subresultant remainder sequence* by setting
+
+.. math::
+
+   f_i = S_{n_{i-1}-1}(f,g) \qquad (2\le i \le k).
+
+In the normal case, these are the same as the `S_{n_i}(f,g)`. He also
+derived expressions for the constants `\gamma_i` in the remainder
+formulas
+
+.. math::
+
+   \gamma_i f_i = \mathrm{rem}(f_{i-2},f_{i-1})
+
+in terms of the leading coefficients of `f_1,\ldots,f_{i-1}`, working
+in the field `K`.
+
+Brown and Traub [BrownTraub71] later developed a recursive procedure
+for computing the coefficients `\gamma_i`. Their algorithm deals with elements
+of the domain `A` exclusively (assuming `f,g\in A[X]`). However, in the
+abnormal case there was a problem, a division in `A`
+which could only be conjectured to be exact.
+
+This was subsequently justified by Brown [Brown78] who showed that
+the result of the division is, in fact, a scalar subresultant.
+More specifically, the constant appearing in the computation of `f_i` is
+`s_{n_{i-2}}(f,g)` (Theorem 3).
+The implication of this discovery is that the scalar subresultants
+are computed as by-products of the algorithm, all but `s_{n_k}(f,g)`
+which is not needed after finding `f_{k+1} = 0`.
+Completing the last step we obtain all non-zero scalar subresultants,
+including the last one which is the resultant if this does not vanish.
+
 .. autofunction:: dmp_inner_subresultants
 .. autofunction:: dmp_subresultants
 .. autofunction:: dmp_prs_resultant
@@ -411,7 +572,9 @@ Polynomial factorization in characteristic zero:
 
 .. currentmodule:: sympy.polys.factortools
 
+.. autofunction:: dup_trial_division
 .. autofunction:: dmp_trial_division
+.. autofunction:: dup_zz_mignotte_bound
 .. autofunction:: dmp_zz_mignotte_bound
 .. autofunction:: dup_zz_hensel_step
 .. autofunction:: dup_zz_hensel_lift
@@ -425,15 +588,48 @@ Polynomial factorization in characteristic zero:
 .. autofunction:: dmp_zz_wang_non_divisors
 .. autofunction:: dmp_zz_wang_test_points
 .. autofunction:: dmp_zz_wang_lead_coeffs
+.. autofunction:: dup_zz_diophantine
 .. autofunction:: dmp_zz_diophantine
 .. autofunction:: dmp_zz_wang_hensel_lifting
 .. autofunction:: dmp_zz_wang
 .. autofunction:: dmp_zz_factor
+.. autofunction:: dup_qq_i_factor
+.. autofunction:: dup_zz_i_factor
+.. autofunction:: dmp_qq_i_factor
+.. autofunction:: dmp_zz_i_factor
+.. autofunction:: dup_ext_factor
 .. autofunction:: dmp_ext_factor
 .. autofunction:: dup_gf_factor
+.. autofunction:: dmp_gf_factor
+.. autofunction:: dup_factor_list
+.. autofunction:: dup_factor_list_include
 .. autofunction:: dmp_factor_list
 .. autofunction:: dmp_factor_list_include
+.. autofunction:: dup_irreducible_p
 .. autofunction:: dmp_irreducible_p
+
+Square-free factorization:
+
+.. currentmodule:: sympy.polys.sqfreetools
+
+.. autofunction:: dup_sqf_p
+.. autofunction:: dmp_sqf_p
+.. autofunction:: dup_sqf_norm
+.. autofunction:: dmp_sqf_norm
+.. autofunction:: dmp_norm
+.. autofunction:: dup_gf_sqf_part
+.. autofunction:: dmp_gf_sqf_part
+.. autofunction:: dup_sqf_part
+.. autofunction:: dmp_sqf_part
+.. autofunction:: dup_gf_sqf_list
+.. autofunction:: dmp_gf_sqf_list
+.. autofunction:: dup_sqf_list
+.. autofunction:: dup_sqf_list_include
+.. autofunction:: dmp_sqf_list
+.. autofunction:: dmp_sqf_list_include
+.. autofunction:: dup_gff_list
+.. autofunction:: dmp_gff_list
+
 
 Groebner basis algorithms
 *************************
@@ -466,6 +662,22 @@ Groebner basis algorithms for modules are also provided:
 .. autofunction:: sdm_nf_mora
 .. autofunction:: sdm_groebner
 
+Options
+=======
+
+.. automodule:: sympy.polys.polyoptions
+
+.. autoclass:: sympy.polys.polyoptions.Options
+   :members:
+.. autofunction:: sympy.polys.polyoptions.build_options
+
+Configuration
+=============
+
+.. automodule:: sympy.polys.polyconfig
+
+.. autofunction:: sympy.polys.polyconfig.setup
+
 Exceptions
 ==========
 
@@ -476,30 +688,93 @@ TODO sort and explain
 .. currentmodule:: sympy.polys.polyerrors
 
 .. autoclass:: BasePolynomialError
+   :members:
 
 .. autoclass:: ExactQuotientFailed
+   :members:
 .. autoclass:: OperationNotSupported
+   :members:
 .. autoclass:: HeuristicGCDFailed
+   :members:
 .. autoclass:: HomomorphismFailed
+   :members:
 .. autoclass:: IsomorphismFailed
+   :members:
 .. autoclass:: ExtraneousFactors
+   :members:
 .. autoclass:: EvaluationFailed
+   :members:
 .. autoclass:: RefinementFailed
+   :members:
 .. autoclass:: CoercionFailed
+   :members:
 .. autoclass:: NotInvertible
+   :members:
 .. autoclass:: NotReversible
+   :members:
 .. autoclass:: NotAlgebraic
+   :members:
 .. autoclass:: DomainError
+   :members:
 .. autoclass:: PolynomialError
+   :members:
 .. autoclass:: UnificationFailed
+   :members:
 .. autoclass:: GeneratorsNeeded
+   :members:
 .. autoclass:: ComputationFailed
+   :members:
 .. autoclass:: GeneratorsError
+   :members:
 .. autoclass:: UnivariatePolynomialError
+   :members:
 .. autoclass:: MultivariatePolynomialError
+   :members:
 .. autoclass:: PolificationFailed
+   :members:
 .. autoclass:: OptionError
+   :members:
 .. autoclass:: FlagError
+   :members:
+
+Reference
+=========
+
+Modular GCD
+***********
+
+.. currentmodule:: sympy.polys.modulargcd
+
+.. autofunction:: modgcd_univariate
+.. autofunction:: modgcd_bivariate
+.. autofunction:: modgcd_multivariate
+.. autofunction:: _modgcd_multivariate_p
+.. autofunction:: func_field_modgcd
+
+Sparse representation
+*********************
+
+.. currentmodule:: sympy.polys.sparsetools
+
+.. py:class:: smp
+
+The ``smp`` type alias represents sparse multivariate polynomials as
+dictionaries mapping monomial exponent tuples to coefficients.
+
+Zippel algorithm
+****************
+
+.. currentmodule:: sympy.polys.zippel
+
+.. autofunction:: lag_basis
+.. autofunction:: vandermonde_interp
+.. autofunction:: from_newt_to_poly
+.. autofunction:: incremental_newton_interp
+.. autofunction:: skeleton_sorter
+.. autofunction:: smp_zippel_gcd
+.. autofunction:: smp_zippel_gcd_mod
+.. autofunction:: smp_zippel_interp_mod
+
 
 Undocumented
 ============

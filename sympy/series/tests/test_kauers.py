@@ -1,9 +1,10 @@
+from __future__ import annotations
 from sympy.series.kauers import finite_diff
 from sympy.series.kauers import finite_diff_kauers
-from sympy.abc import x, y, z, m, n, k, w
-from sympy import sin, cos
-from sympy import pi
-from sympy import Sum
+from sympy.abc import x, y, z, m, n, w
+from sympy.core.numbers import pi
+from sympy.functions.elementary.trigonometric import (cos, sin)
+from sympy.concrete.summations import Sum
 
 
 def test_finite_diff():

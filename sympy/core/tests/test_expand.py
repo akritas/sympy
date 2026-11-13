@@ -1,12 +1,21 @@
-from sympy import (log, sqrt, Rational as R, Symbol, I, exp, pi, S,
-    cos, sin, Mul, Pow, cse, O)
-from sympy.simplify.simplify import expand_numer, expand
-from sympy.core.function import (
-    expand_power_base, expand_multinomial)
+from __future__ import annotations
+from sympy.core.expr import unchanged
+from sympy.core.mul import Mul
+from sympy.core.numbers import (I, Rational as R, pi)
+from sympy.core.power import Pow
+from sympy.core.singleton import S
+from sympy.core.symbol import Symbol
+from sympy.functions.combinatorial.factorials import factorial
+from sympy.functions.elementary.exponential import (exp, log, exp_polar)
+from sympy.functions.elementary.miscellaneous import sqrt
+from sympy.functions.elementary.trigonometric import (cos, sin)
+from sympy.series.order import O
+from sympy.simplify.radsimp import expand_numer
+from sympy.core.function import (expand, expand_multinomial,
+    expand_power_base, expand_log)
 
-from sympy.utilities.pytest import raises
-from sympy.core.function import expand_power_base
-from sympy.utilities.randtest import test_numerically
+from sympy.testing.pytest import raises
+from sympy.core.random import verify_numerically
 
 from sympy.abc import x, y, z
 
@@ -52,7 +61,7 @@ def test_expand_non_commutative():
     assert ((A + B)**2).expand() == A**2 + A*B + B*A + B**2
     assert ((A + B)**3).expand() == (A**2*B + B**2*A + A*B**2 + B*A**2 +
                                      A**3 + B**3 + A*B*A + B*A*B)
-    # 3120
+    # issue 6219
     assert ((a*A*B*A**-1)**2).expand() == a**2*A*B**2/A
     # Note that (a*A*B*A**-1)**2 is automatically converted to a**2*(A*B*A**-1)**2
     assert ((a*A*B*A**-1)**2).expand(deep=False) == a**2*(A*B*A**-1)**2
@@ -62,14 +71,14 @@ def test_expand_non_commutative():
     assert ((a*A)**2).expand() == a**2*A**2
     assert ((a*A*B)**i).expand() == a**i*(A*B)**i
     assert ((a*A*(B*(A*B/A)**2))**i).expand() == a**i*(A*B*A*B**2/A)**i
-    # 3459
-    assert (A*B*(A*B)**-1).expand() == A*B*(A*B)**-1
+    # issue 6558
+    assert (A*B*(A*B)**-1).expand() == 1
     assert ((a*A)**i).expand() == a**i*A**i
     assert ((a*A*B*A**-1)**3).expand() == a**3*A*B**3/A
     assert ((a*A*B*A*B/A)**3).expand() == \
         a**3*A*B*(A*B**2)*(A*B**2)*A*B*A**(-1)
-    assert ((a*A*B*A*B/A)**-3).expand() == \
-        a**-3*(A*B*(A*B**2)*(A*B**2)*A*B*A**(-1))**-1
+    assert ((a*A*B*A*B/A)**-2).expand() == \
+        A*B**-1*A**-1*B**-2*A**-1*B**-1*A**-1/a**2
     assert ((a*b*A*B*A**-1)**i).expand() == a**i*b**i*(A*B/A)**i
     assert ((a*(a*b)**i)**i).expand() == a**i*a**(i**2)*b**(i**2)
     e = Pow(Mul(a, 1/a, A, B, evaluate=False), S(2), evaluate=False)
@@ -113,7 +122,7 @@ def test_expand_modulus():
     raises(ValueError, lambda: ((x + y)**11).expand(modulus=x))
 
 
-def test_issue_2644():
+def test_issue_5743():
     assert (x*sqrt(
         x + y)*(1 + sqrt(x + y))).expand() == x**2 + x*y + x*sqrt(x + y)
     assert (x*sqrt(
@@ -129,21 +138,23 @@ def test_expand_frac():
         y*(x + y)/(x**2 + x)
     eq = (x + 1)**2/y
     assert expand_numer(eq, multinomial=False) == eq
+    # issue 26329
+    eq = (exp(x*z) - exp(y*z))/exp(z*(x + y))
+    ans = exp(-y*z) - exp(-x*z)
+    assert eq.expand(numer=True) != ans
+    assert eq.expand(numer=True, exact=True) == ans
+    assert expand_numer(eq) != ans
+    assert expand_numer(eq, exact=True) == ans
 
 
-def test_issue_3022():
+def test_issue_6121():
     eq = -I*exp(-3*I*pi/4)/(4*pi**(S(3)/2)*sqrt(x))
-    assert cse((eq).expand(complex=True)) == S('''
-        ([(x0, re(x)), (x1, im(x)), (x2, sin(atan2(x1, x0)/2)), (x3,
-        cos(atan2(x1, x0)/2)), (x4, x0**2 + x1**2), (x5, sin(atan2(0, x4)/4)),
-        (x6, cos(atan2(0, x4)/4)), (x7, x2*x5), (x8, x3*x5), (x9, x2*x6),
-        (x10, x3*x6)], [sqrt(2)*(-x10 + I*x10 + x7 - I*x7 + x8 + I*x8 + x9 +
-        I*x9)/(8*pi**(3/2)*x4**(1/4))])''')
+    assert eq.expand(complex=True)  # does not give oo recursion
+    eq = -I*exp(-3*I*pi/4)/(4*pi**(R(3, 2))*sqrt(x))
+    assert eq.expand(complex=True)  # does not give oo recursion
 
 
 def test_expand_power_base():
-    # was test_separate()
-
     assert expand_power_base((x*y*z)**4) == x**4*y**4*z**4
     assert expand_power_base((x*y*z)**x).is_Pow
     assert expand_power_base((x*y*z)**x, force=True) == x**x*y**x*z**x
@@ -166,6 +177,8 @@ def test_expand_power_base():
     assert expand_power_base((exp(x)*exp(y))**z).is_Pow
     assert expand_power_base(
         (exp(x)*exp(y))**z, force=True) == exp(x)**z*exp(y)**z
+    q = exp_polar(I*pi/2)
+    assert expand_power_base(sqrt(z*q)) == sqrt(z)*exp_polar(I*pi/4)
 
 
 def test_expand_arit():
@@ -195,7 +208,7 @@ def test_expand_arit():
     assert e.expand() == 5*a + 5*b + 5*c + 2*a*c + b*c + a*b + a**2 + c**2
     x = Symbol("x")
     s = exp(x*x) - 1
-    e = s.nseries(x, 0, 3)/x**2
+    e = s.nseries(x, 0, 6)/x**2
     assert e.expand() == 1 + x**2/2 + O(x**4)
 
     e = (x*(y + z))**(x*(y + z))*(x + y)
@@ -203,6 +216,8 @@ def test_expand_arit():
                     z)**(x*y + x*z) + y*(x*y + x*z)**(x*y + x*z)
     assert e.expand(power_exp=False, power_base=False, deep=False) == x* \
         (x*(y + z))**(x*(y + z)) + y*(x*(y + z))**(x*(y + z))
+    e = x * (x + (y + 1)**2)
+    assert e.expand(deep=False) == x**2 + x*(y + 1)**2
     e = (x*(y + z))**z
     assert e.expand(power_base=True, mul=True, deep=True) in [x**z*(y +
                     z)**z, (x*y + x*z)**z]
@@ -219,9 +234,9 @@ def test_expand_arit():
     m = Symbol('m', negative=True)
     assert ((-2*x*y*n)**z).expand() == 2**z*(-n)**z*(x*y)**z
     assert ((-2*x*y*n*m)**z).expand() == 2**z*(-m)**z*(-n)**z*(-x*y)**z
-    # issue 2383
+    # issue 5482
     assert sqrt(-2*x*n) == sqrt(2)*sqrt(-n)*sqrt(x)
-    # issue 2506 (2)
+    # issue 5605 (2)
     assert (cos(x + y)**2).expand(trig=True) in [
         (-sin(x)*sin(y) + cos(x)*cos(y))**2,
         sin(x)**2*sin(y)**2 - 2*sin(x)*sin(y)*cos(x)*cos(y) + cos(x)**2*cos(y)**2
@@ -235,6 +250,15 @@ def test_expand_arit():
     W = W.expand()
     assert W.has(-1672280820*x**15)
 
+def test_expand_mul():
+    # part of issue 20597
+    e = Mul(2, 3, evaluate=False)
+    assert e.expand() == 6
+
+    e = Mul(2, 3, 1/x, evaluate=False)
+    assert e.expand() == 6/x
+    e = Mul(2, R(1, 3), evaluate=False)
+    assert e.expand() == R(2, 3)
 
 def test_power_expand():
     """Test for Pow.expand()"""
@@ -255,13 +279,13 @@ def test_power_expand():
     assert (A**(a + b)).expand() != A**(a + b)
 
 
-def test_issues_2820_3731():
-    # 2820
+def test_issues_5919_6830():
+    # issue 5919
     n = -1 + 1/x
     z = n/x/(-n)**2 - 1/n/x
     assert expand(z) == 1/(x**2 - 2*x + 1) - 1/(x - 2 + 1/x) - 1/(-x + 1)
 
-    # 3731
+    # issue 6830
     p = (1 + x)**2
     assert expand_multinomial((1 + x*p)**2) == (
         x**2*(x**4 + 4*x**3 + 6*x**2 + 4*x + 1) + 2*x*(x**2 + 2*x + 1) + 1)
@@ -292,10 +316,10 @@ def test_issues_2820_3731():
     # coverage
     def ok(a, b, n):
         e = (a + I*b)**n
-        return test_numerically(e, expand_multinomial(e))
+        return verify_numerically(e, expand_multinomial(e))
 
     for a in [2, S.Half]:
-        for b in [3, S(1)/3]:
+        for b in [3, R(1, 3)]:
             for n in range(2, 6):
                 assert ok(a, b, n)
 
@@ -310,3 +334,34 @@ def test_expand_log():
     t = Symbol('t', positive=True)
     # after first expansion, -2*log(2) + log(4); then 0 after second
     assert expand(log(t**2) - log(t**2/4) - 2*log(2)) == 0
+    assert expand_log(log(7*6)/log(6)) == 1 + log(7)/log(6)
+    b = factorial(10)
+    assert expand_log(log(7*b**4)/log(b)
+        ) == 4 + log(7)/log(b)
+
+
+def test_issue_23952():
+    assert (x**(y + z)).expand(force=True) == x**y*x**z
+    one = Symbol('1', integer=True, prime=True, odd=True, positive=True)
+    two = Symbol('2', integer=True, prime=True, even=True)
+    e = two - one
+    for b in (0, x):
+        # 0**e = 0, 0**-e = zoo; but if expanded then nan
+        assert unchanged(Pow, b, e)  # power_exp
+        assert unchanged(Pow, b, -e)  # power_exp
+        assert unchanged(Pow, b, y - x)  # power_exp
+        assert unchanged(Pow, b, 3 - x)  # multinomial
+        assert (b**e).expand().is_Pow  # power_exp
+        assert (b**-e).expand().is_Pow  # power_exp
+        assert (b**(y - x)).expand().is_Pow  # power_exp
+        assert (b**(3 - x)).expand().is_Pow  # multinomial
+    nn1 = Symbol('nn1', nonnegative=True)
+    nn2 = Symbol('nn2', nonnegative=True)
+    nn3 = Symbol('nn3', nonnegative=True)
+    assert (x**(nn1 + nn2)).expand() == x**nn1*x**nn2
+    assert (x**(-nn1 - nn2)).expand() == x**-nn1*x**-nn2
+    assert unchanged(Pow, x, nn1 + nn2 - nn3)
+    assert unchanged(Pow, x, 1 + nn2 - nn3)
+    assert unchanged(Pow, x, nn1 - nn2)
+    assert unchanged(Pow, x, 1 - nn2)
+    assert unchanged(Pow, x, -1 + nn2)

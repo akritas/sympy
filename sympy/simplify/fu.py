@@ -1,214 +1,28 @@
-"""
-Implementation of the trigsimp algorithm by Fu et al.
-
-The idea behind the ``fu`` algorithm is to use a sequence of rules, applied
-in what is heuristically known to be a smart order, to select a simpler
-expression that is equivalent to the input.
-
-There are transform rules in which a single rule is applied to the
-expression tree. The following are just mnemonic in nature; see the
-docstrings for examples.
-
-    TR0 - simplify expression
-    TR1 - sec-csc to cos-sin
-    TR2 - tan-cot to sin-cos ratio
-    TR2i - sin-cos ratio to tan
-    TR3 - angle canonicalization
-    TR4 - functions at special angles
-    TR5 - powers of sin to powers of cos
-    TR6 - powers of cos to powers of sin
-    TR7 - reduce cos power (increase angle)
-    TR8 - expand products of sin-cos to sums
-    TR9 - contract sums of sin-cos to products
-    TR10 - separate sin-cos arguments
-    TR10i - collect sin-cos arguments
-    TR11 - reduce double angles
-    TR12 - separate tan arguments
-    TR12i - collect tan arguments
-    TR13 - expand product of tan-cot
-    TRmorrie - prod(cos(x*2**i), (i, 0, k - 1)) -> sin(2**k*x)/(2**k*sin(x))
-    TR14 - factored powers of sin or cos to cos or sin power
-    TR15 - negative powers of sin to cot power
-    TR16 - negative powers of cos to tan power
-    TR22 - tan-cot powers to negative powers of sec-csc functions
-    TR111 - negative sin-cos-tan powers to csc-sec-cot
-
-There are 4 combination transforms (CTR1 - CTR4) in which a seqence of
-transformations are applied and the simplest expression is selected from
-a few options.
-
-Finally, there are the 2 rule lists (RL1 and RL2), which apply a
-sequence of transformations and combined transformations, and the ``fu``
-algorithm itself, which applies rules and rule lists and selects the
-best expressions. There is also a function ``L`` which counts the number
-of trigonometric funcions that appear in the expression.
-
-Other than TR0, re-writing of expressions is not done by the transformations.
-e.g. TR10i finds pairs of terms in a sum that are in the form like
-``cos(x)*cos(y) + sin(x)*sin(y)``. Such expression are targeted in a bottom-up
-traversal of the expression, but no manipulation to make them appear is
-attempted. For example,
-
-    Set-up for examples below:
-
-    >>> from sympy.simplify.fu import fu, L, TR9, TR10i, TR11
-    >>> from sympy import factor, sin, cos, powsimp
-    >>> from sympy.abc import x, y, z, a
-    >>> from time import time
-
->>> eq = cos(x + y)/cos(x)
->>> TR10i(eq.expand(trig=True))
--sin(x)*sin(y)/cos(x) + cos(y)
-
-If the expression is put in "normal" form (with a common denominator) then
-the transformation is successful:
-
->>> TR10i(_.normal())
-cos(x + y)/cos(x)
-
-TR11's behavior is similar. It rewrites double angles as smaller angles but
-doesn't do any simplification of the result.
-
->>> TR11(sin(2)**a*cos(1)**(-a), 1)
-(2*sin(1)*cos(1))**a*cos(1)**(-a)
->>> powsimp(_)
-(2*sin(1))**a
-
-The temptation is to try make these TR rules "smarter" but that should really
-be done at a higher level; the TR rules should try maintain the "do one thing
-well" principle.  There is one exception, however. In TR10i and TR9 terms are
-recognized even when they are each multiplied by a common factor:
-
->>> fu(a*cos(x)*cos(y) + a*sin(x)*sin(y))
-a*cos(x - y)
-
-Factoring with ``factor_terms`` is used but it it "JIT"-like, being delayed
-until it is deemed necessary. Furthermore, if the factoring does not
-help with the simplification, it is not retained, so
-``a*cos(x)*cos(y) + a*sin(x)*sin(z)`` does not become the factored
-(but unsimplified in the trigonometric sense) expression:
-
->>> fu(a*cos(x)*cos(y) + a*sin(x)*sin(z))
-a*sin(x)*sin(z) + a*cos(x)*cos(y)
-
-In some cases factoring might be a good idea, but the user is left
-to make that decision. For example:
-
->>> expr=((15*sin(2*x) + 19*sin(x + y) + 17*sin(x + z) + 19*cos(x - z) +
-... 25)*(20*sin(2*x) + 15*sin(x + y) + sin(y + z) + 14*cos(x - z) +
-... 14*cos(y - z))*(9*sin(2*y) + 12*sin(y + z) + 10*cos(x - y) + 2*cos(y -
-... z) + 18)).expand(trig=True).expand()
-
-In the expanded state, there are nearly 1000 trig functions:
-
->>> L(expr)
-932
-
-If the expression where factored first, this would take time but the
-resulting expression would be transformed very quickly:
-
->>> def clock(f, n=2):
-...    t=time(); f(); return round(time()-t, n)
-...
->>> clock(lambda: factor(expr))  # doctest: +SKIP
-0.86
->>> clock(lambda: TR10i(expr), 3)  # doctest: +SKIP
-0.016
-
-If the unexpanded expression is used, the transformation takes longer but
-not as long as it took to factor it and then transform it:
-
->>> clock(lambda: TR10i(expr), 2)  # doctest: +SKIP
-0.28
-
-So neither expansion nor factoring is used in ``TR10i``: if the
-expression is already factored (or partially factored) then expansion
-with ``trig=True`` would destroy what is already known and take
-longer; if the expression is expanded, factoring may take longer than
-simply applying the transformation itself.
-
-Although the algorithms should be canonical, always giving the same
-result, they may not yield the best result. This, in general, is
-the nature of simplification where searching all possible transformation
-paths is very expensive. Here is a simple example. There are 6 terms
-in the following sum:
-
->>> expr = (sin(x)**2*cos(y)*cos(z) + sin(x)*sin(y)*cos(x)*cos(z) +
-... sin(x)*sin(z)*cos(x)*cos(y) + sin(y)*sin(z)*cos(x)**2 + sin(y)*sin(z) +
-... cos(y)*cos(z))
->>> args = expr.args
-
-Serendipitously, fu gives the best result:
-
->>> fu(expr)
-3*cos(y - z)/2 - cos(2*x + y + z)/2
-
-But if different terms were combined, a less-optimal result might be
-obtained, requiring some additional work to get better simplification,
-but still less than optimal. The following shows an alternative form
-of ``expr`` that resists optimal simplification once a given step
-is taken since it leads to a dead end:
-
->>> TR9(-cos(x)**2*cos(y + z) + 3*cos(y - z)/2 +
-...     cos(y + z)/2 + cos(-2*x + y + z)/4 - cos(2*x + y + z)/4)
-sin(2*x)*sin(y + z)/2 - cos(x)**2*cos(y + z) + 3*cos(y - z)/2 + cos(y + z)/2
-
-Here is a smaller expression that exhibits the same behavior:
-
->>> a = sin(x)*sin(z)*cos(x)*cos(y) + sin(x)*sin(y)*cos(x)*cos(z)
->>> TR10i(a)
-sin(x)*sin(y + z)*cos(x)
->>> newa = _
->>> TR10i(expr - a)  # this combines two more of the remaining terms
-sin(x)**2*cos(y)*cos(z) + sin(y)*sin(z)*cos(x)**2 + cos(y - z)
->>> TR10i(_ + newa) == _ + newa  # but now there is no more simplification
-True
-
-Without getting lucky or trying all possible pairings of arguments, the
-final result may be less than optimal and impossible to find without
-better heuristics or brute force trial of all possibilities.
-
-Notes
-=====
-
-This work was started by Dimitar Vlahovski at the Technological School
-"Electronic systems" (30.11.2011).
-
-References
-==========
-http://rfdz.ph-noe.ac.at/fileadmin/Mathematik_Uploads/ACDCA/
-DESTIME2006/DES_contribs/Fu/simplification.pdf
-
-http://www.sosmath.com/trig/Trig5/trig5/pdf/pdf.html gives a formula sheet.
-
-"""
-
-from __future__ import print_function, division
-
+from __future__ import annotations
 from collections import defaultdict
-from itertools import combinations
 
-from sympy.simplify.simplify import (simplify, powsimp, ratsimp, combsimp,
-    _mexpand, bottom_up)
-from sympy.core.sympify import sympify
-from sympy.functions.elementary.trigonometric import (
-    cos, sin, tan, cot, sec, csc, sqrt)
-from sympy.functions.elementary.hyperbolic import cosh, sinh, tanh, coth
-from sympy.core.compatibility import ordered
-from sympy.core.core import C
-from sympy.core.mul import Mul
-from sympy.core.power import Pow
-from sympy.core.function import expand_mul, count_ops
 from sympy.core.add import Add
+from sympy.core.cache import cacheit
+from sympy.core.expr import Expr
+from sympy.core.exprtools import Factors, gcd_terms, factor_terms
+from sympy.core.function import expand_mul
+from sympy.core.mul import Mul
+from sympy.core.numbers import pi, I
+from sympy.core.power import Pow
+from sympy.core.singleton import S
+from sympy.core.sorting import ordered
 from sympy.core.symbol import Dummy
-from sympy.core.exprtools import Factors, gcd_terms
-from sympy.core.rules import Transform
-from sympy.core.basic import S
-from sympy.core.numbers import Integer, pi, I
+from sympy.core.sympify import sympify
+from sympy.core.traversal import bottom_up
+from sympy.functions.combinatorial.factorials import binomial
+from sympy.functions.elementary.hyperbolic import (
+    cosh, sinh, tanh, coth, sech, csch, HyperbolicFunction)
+from sympy.functions.elementary.trigonometric import (
+    cos, sin, tan, cot, sec, csc, sqrt, TrigonometricFunction)
+from sympy.ntheory.factor_ import perfect_power
+from sympy.polys.polytools import factor
 from sympy.strategies.tree import greedy
 from sympy.strategies.core import identity, debug
-from sympy.polys.polytools import factor
-from sympy.ntheory.factor_ import perfect_power
 
 from sympy import SYMPY_DEBUG
 
@@ -238,10 +52,10 @@ def TR1(rv):
     """
 
     def f(rv):
-        if rv.func is sec:
+        if isinstance(rv, sec):
             a = rv.args[0]
             return S.One/cos(a)
-        elif rv.func is csc:
+        elif isinstance(rv, csc):
             a = rv.args[0]
             return S.One/sin(a)
         return rv
@@ -268,10 +82,10 @@ def TR2(rv):
     """
 
     def f(rv):
-        if rv.func is tan:
+        if isinstance(rv, tan):
             a = rv.args[0]
             return sin(a)/cos(a)
-        elif rv.func is cot:
+        elif isinstance(rv, cot):
             a = rv.args[0]
             return cos(a)/sin(a)
         return rv
@@ -303,7 +117,7 @@ def TR2i(rv, half=False):
     for both numerator and denominator)
 
     >>> TR2i(sin(x)**a/(cos(x) + 1)**a)
-    (cos(x) + 1)**(-a)*sin(x)**a
+    sin(x)**a/(cos(x) + 1)**a
 
     """
 
@@ -322,7 +136,7 @@ def TR2i(rv, half=False):
                 k.func in (sin, cos) or (half and
                 k.is_Add and
                 len(k.args) >= 2 and
-                any(any(ai.func is cos or ai.is_Pow and ai.base is cos
+                any(any(isinstance(ai, cos) or ai.is_Pow and ai.base is cos
                 for ai in Mul.make_args(a)) for a in k.args))))
 
         n = n.as_powers_dict()
@@ -340,7 +154,7 @@ def TR2i(rv, half=False):
         def factorize(d, ddone):
             newk = []
             for k in d:
-                if k.is_Add and len(k.args) > 2:
+                if k.is_Add and len(k.args) > 1:
                     knew = factor(k) if half else factor_terms(k)
                     if knew != k:
                         newk.append((k, knew))
@@ -350,10 +164,11 @@ def TR2i(rv, half=False):
                     newk[i] = knew
                 newk = Mul(*newk).as_powers_dict()
                 for k in newk:
-                    if ok(k, d[k]):
-                        d[k] += newk[k]
+                    v = d[k] + newk[k]
+                    if ok(k, v):
+                        d[k] = v
                     else:
-                        ddone.append((k, d[k]))
+                        ddone.append((k, v))
                 del newk
         factorize(n, ndone)
         factorize(d, ddone)
@@ -361,7 +176,7 @@ def TR2i(rv, half=False):
         # joining
         t = []
         for k in n:
-            if k.func is sin:
+            if isinstance(k, sin):
                 a = cos(k.args[0], evaluate=False)
                 if a in d and d[a] == n[k]:
                     t.append(tan(k.args[0])**n[k])
@@ -371,13 +186,13 @@ def TR2i(rv, half=False):
                     if a1 in d and d[a1] == n[k]:
                         t.append((tan(k.args[0]/2))**n[k])
                         n[k] = d[a1] = None
-            elif k.func is cos:
+            elif isinstance(k, cos):
                 a = sin(k.args[0], evaluate=False)
                 if a in d and d[a] == n[k]:
                     t.append(tan(k.args[0])**-n[k])
                     n[k] = d[a] = None
             elif half and k.is_Add and k.args[0] is S.One and \
-                    k.args[1].func is cos:
+                    isinstance(k.args[1], cos):
                 a = sin(k.args[1].args[0], evaluate=False)
                 if a in d and d[a] == n[k] and (d[a].is_integer or \
                         a.is_positive):
@@ -423,13 +238,22 @@ def TR3(rv):
     #   Argument of type : 2k*pi +/- angle
 
     def f(rv):
-        if not isinstance(rv, C.TrigonometricFunction):
+        if not isinstance(rv, TrigonometricFunction):
             return rv
         rv = rv.func(signsimp(rv.args[0]))
-        if (S.Pi/4 < rv.args[0]) is (rv.args[0] < S.Pi/2) is True:
+        if not isinstance(rv, TrigonometricFunction):
+            return rv
+        if (rv.args[0] - S.Pi/4).is_positive is (S.Pi/2 - rv.args[0]).is_positive is True:
             fmap = {cos: sin, sin: cos, tan: cot, cot: tan, sec: csc, csc: sec}
-            rv = fmap[rv.func](S.Pi/2 - rv.args[0])
+            rv = fmap[type(rv)](S.Pi/2 - rv.args[0])
         return rv
+
+    # touch numbers iside of trig functions to let them automatically update
+    rv = rv.replace(
+        lambda x: isinstance(x, TrigonometricFunction),
+        lambda x: x.replace(
+            lambda n: n.is_number and n.is_Mul,
+            lambda n: n.func(*n.args)))
 
     return bottom_up(rv, f)
 
@@ -439,14 +263,13 @@ def TR4(rv):
 
         a=  0   pi/6        pi/4        pi/3        pi/2
     ----------------------------------------------------
-    cos(a)  0   1/2         sqrt(2)/2   sqrt(3)/2   1
-    sin(a)  1   sqrt(3)/2   sqrt(2)/2   1/2         0
+    sin(a)  0   1/2         sqrt(2)/2   sqrt(3)/2   1
+    cos(a)  1   sqrt(3)/2   sqrt(2)/2   1/2         0
     tan(a)  0   sqt(3)/3    1           sqrt(3)     --
 
     Examples
     ========
 
-    >>> from sympy.simplify.fu import TR4
     >>> from sympy import pi
     >>> from sympy import cos, sin, tan, cot
     >>> for s in (0, pi/6, pi/4, pi/3, pi/2):
@@ -459,7 +282,12 @@ def TR4(rv):
     0 1 zoo 0
     """
     # special values at 0, pi/6, pi/4, pi/3, pi/2 already handled
-    return rv
+    return rv.replace(
+        lambda x:
+            isinstance(x, TrigonometricFunction) and
+            (r:=x.args[0]/pi).is_Rational and r.q in (1, 2, 3, 4, 6),
+        lambda x:
+            x.func(x.args[0].func(*x.args[0].args)))
 
 
 def _TR56(rv, f, g, h, max, pow):
@@ -479,13 +307,13 @@ def _TR56(rv, f, g, h, max, pow):
     >>> from sympy import sin, cos
     >>> h = lambda x: 1 - x
     >>> T(sin(x)**3, sin, cos, h, 4, False)
-    sin(x)**3
+    (1 - cos(x)**2)*sin(x)
     >>> T(sin(x)**6, sin, cos, h, 6, False)
-    (-cos(x)**2 + 1)**3
+    (1 - cos(x)**2)**3
     >>> T(sin(x)**6, sin, cos, h, 6, True)
     sin(x)**6
     >>> T(sin(x)**8, sin, cos, h, 10, True)
-    (-cos(x)**2 + 1)**4
+    (1 - cos(x)**2)**4
     """
 
     def _f(rv):
@@ -495,15 +323,22 @@ def _TR56(rv, f, g, h, max, pow):
         # change is not going to allow a simplification as far as I can tell.
         if not (rv.is_Pow and rv.base.func == f):
             return rv
-
-        if (rv.exp < 0) is True:
+        if not rv.exp.is_real:
             return rv
-        if (rv.exp > max) is True:
+
+        if (rv.exp < 0) == True:
+            return rv
+        if (rv.exp > max) == True:
+            return rv
+        if rv.exp == 1:
             return rv
         if rv.exp == 2:
             return h(g(rv.base.args[0])**2)
         else:
-            if rv.exp == 4:
+            if rv.exp % 2 == 1:
+                e = rv.exp//2
+                return f(rv.base.args[0])*h(g(rv.base.args[0])**2)**e
+            elif rv.exp == 4:
                 e = 2
             elif not pow:
                 if rv.exp % 2:
@@ -531,11 +366,11 @@ def TR5(rv, max=4, pow=False):
     >>> from sympy.abc import x
     >>> from sympy import sin
     >>> TR5(sin(x)**2)
-    -cos(x)**2 + 1
+    1 - cos(x)**2
     >>> TR5(sin(x)**-2)  # unchanged
     sin(x)**(-2)
     >>> TR5(sin(x)**4)
-    (-cos(x)**2 + 1)**2
+    (1 - cos(x)**2)**2
     """
     return _TR56(rv, sin, cos, lambda x: 1 - x, max=max, pow=pow)
 
@@ -552,17 +387,17 @@ def TR6(rv, max=4, pow=False):
     >>> from sympy.abc import x
     >>> from sympy import cos
     >>> TR6(cos(x)**2)
-    -sin(x)**2 + 1
+    1 - sin(x)**2
     >>> TR6(cos(x)**-2)  #unchanged
     cos(x)**(-2)
     >>> TR6(cos(x)**4)
-    (-sin(x)**2 + 1)**2
+    (1 - sin(x)**2)**2
     """
     return _TR56(rv, cos, sin, lambda x: 1 - x, max=max, pow=pow)
 
 
 def TR7(rv):
-    """Lowering the degree of cos(x)**2
+    """Lowering the degree of cos(x)**2.
 
     Examples
     ========
@@ -592,14 +427,14 @@ def TR8(rv, first=True):
     Examples
     ========
 
-    >>> from sympy.simplify.fu import TR8, TR7
+    >>> from sympy.simplify.fu import TR8
     >>> from sympy import cos, sin
     >>> TR8(cos(2)*cos(3))
-    cos(5)/2 + cos(1)/2
+    cos(1)/2 + cos(5)/2
     >>> TR8(cos(2)*sin(3))
-    sin(5)/2 + sin(1)/2
+    sin(1)/2 + sin(5)/2
     >>> TR8(sin(2)*sin(3))
-    -cos(5)/2 + cos(1)/2
+    cos(1)/2 - cos(5)/2
     """
 
     def f(rv):
@@ -622,14 +457,14 @@ def TR8(rv, first=True):
             return rv
 
         args = {cos: [], sin: [], None: []}
-        for a in ordered(Mul.make_args(rv)):
+        for a in Mul.make_args(rv):
             if a.func in (cos, sin):
-                args[a.func].append(a.args[0])
+                args[type(a)].append(a.args[0])
             elif (a.is_Pow and a.exp.is_Integer and a.exp > 0 and \
                     a.base.func in (cos, sin)):
                 # XXX this is ok but pathological expression could be handled
                 # more efficiently as in TRmorrie
-                args[a.base.func].extend([a.base.args[0]]*a.exp)
+                args[type(a.base)].extend([a.base.args[0]]*a.exp)
             else:
                 args[None].append(a)
         c = args[cos]
@@ -671,15 +506,15 @@ def TR9(rv):
     >>> TR9(cos(1) + cos(2))
     2*cos(1/2)*cos(3/2)
     >>> TR9(cos(1) + 2*sin(1) + 2*sin(2))
-    cos(1) + 4*sin(3/2)*cos(1/2)
+    4*sin(3/2)*cos(1/2) + cos(1)
 
     If no change is made by TR9, no re-arrangement of the
     expression will be made. For example, though factoring
     of common term is attempted, if the factored expression
-    wasn't changed, the original expression will be returned:
+    was not changed, the original expression will be returned:
 
     >>> TR9(cos(3) + cos(3)*cos(2))
-    cos(3) + cos(2)*cos(3)
+    cos(2)*cos(3) + cos(3)
 
     """
 
@@ -764,16 +599,15 @@ def TR10(rv, first=True):
     >>> from sympy.abc import a, b, c
     >>> from sympy import cos, sin
     >>> TR10(cos(a + b))
-    -sin(a)*sin(b) + cos(a)*cos(b)
+    cos(a)*cos(b) - sin(a)*sin(b)
     >>> TR10(sin(a + b))
     sin(a)*cos(b) + sin(b)*cos(a)
     >>> TR10(sin(a + b + c))
-    (-sin(a)*sin(b) + cos(a)*cos(b))*sin(c) + \
-    (sin(a)*cos(b) + sin(b)*cos(a))*cos(c)
+    (cos(a)*cos(b) - sin(a)*sin(b))*sin(c) + (sin(a)*cos(b) + sin(b)*cos(a))*cos(c)
     """
 
     def f(rv):
-        if not rv.func in (cos, sin):
+        if rv.func not in (cos, sin):
             return rv
 
         f = rv.func
@@ -809,21 +643,17 @@ def TR10i(rv):
     ========
 
     >>> from sympy.simplify.fu import TR10i
-    >>> from sympy import cos, sin, pi, Add, Mul, sqrt, Symbol
-    >>> from sympy.abc import x, y
+    >>> from sympy import cos, sin, sqrt
+    >>> from sympy.abc import x
 
     >>> TR10i(cos(1)*cos(3) + sin(1)*sin(3))
     cos(2)
     >>> TR10i(cos(1)*sin(3) + sin(1)*cos(3) + cos(3))
-    cos(3) + sin(4)
+    sin(4) + cos(3)
     >>> TR10i(sqrt(2)*cos(x)*x + sqrt(6)*sin(x)*x)
     2*sqrt(2)*x*sin(x + pi/6)
 
     """
-    global _ROOT2, _ROOT3, _invROOT3
-    if _ROOT2 is None:
-        _roots()
-
     def f(rv):
         if not rv.is_Add:
             return rv
@@ -907,7 +737,7 @@ def TR10i(rv):
             # that have the right ratio
             args = []
             for a in byrad:
-                for b in [_ROOT3*a, _invROOT3]:
+                for b in [_ROOT3()*a, _invROOT3()]:
                     if b in byrad:
                         for i in range(len(byrad[a])):
                             if byrad[a][i] is None:
@@ -948,11 +778,11 @@ def TR11(rv, base=None):
     >>> TR11(sin(2*x))
     2*sin(x)*cos(x)
     >>> TR11(cos(2*x))
-    -sin(x)**2 + cos(x)**2
+    cos(x)**2 - sin(x)**2
     >>> TR11(sin(4*x))
-    4*(-sin(x)**2 + cos(x)**2)*sin(x)*cos(x)
+    4*(cos(x)**2 - sin(x)**2)*sin(x)*cos(x)
     >>> TR11(sin(4*x/3))
-    4*(-sin(x/3)**2 + cos(x/3)**2)*sin(x/3)*cos(x/3)
+    4*(cos(x/3)**2 - sin(x/3)**2)*sin(x/3)*cos(x/3)
 
     If the arguments are simply integers, no change is made
     unless a base is provided:
@@ -960,13 +790,13 @@ def TR11(rv, base=None):
     >>> TR11(cos(2))
     cos(2)
     >>> TR11(cos(4), 2)
-    -sin(2)**2 + cos(2)**2
+    cos(2)**2 - sin(2)**2
 
     There is a subtle issue here in that autosimplification will convert
     some higher angles to lower angles
 
     >>> cos(6*pi/7) + cos(3*pi/7)
-    -cos(pi/7) + cos(3*pi/7)
+    cos(3*pi/7) - cos(pi/7)
 
     The 6*pi/7 angle is now pi/7 but can be targeted with TR11 by supplying
     the 3*pi/7 base:
@@ -977,7 +807,7 @@ def TR11(rv, base=None):
     """
 
     def f(rv):
-        if not rv.func in (cos, sin):
+        if rv.func not in (cos, sin):
             return rv
 
         if base:
@@ -986,7 +816,7 @@ def TR11(rv, base=None):
             co = S.One
             if t.is_Mul:
                 co, t = t.as_coeff_Mul()
-            if not t.func in (cos, sin):
+            if t.func not in (cos, sin):
                 return rv
             if rv.args[0] == t.args[0]:
                 c = cos(base)
@@ -1014,18 +844,78 @@ def TR11(rv, base=None):
     return bottom_up(rv, f)
 
 
+def _TR11(rv):
+    """
+    Helper for TR11 to find half-arguments for sin in factors of
+    num/den that appear in cos or sin factors in the den/num.
+
+    Examples
+    ========
+
+    >>> from sympy.simplify.fu import TR11, _TR11
+    >>> from sympy import cos, sin
+    >>> from sympy.abc import x
+    >>> TR11(sin(x/3)/(cos(x/6)))
+    sin(x/3)/cos(x/6)
+    >>> _TR11(sin(x/3)/(cos(x/6)))
+    2*sin(x/6)
+    >>> TR11(sin(x/6)/(sin(x/3)))
+    sin(x/6)/sin(x/3)
+    >>> _TR11(sin(x/6)/(sin(x/3)))
+    1/(2*cos(x/6))
+
+    """
+    def f(rv):
+        if not isinstance(rv, Expr):
+            return rv
+
+        def sincos_args(flat):
+            # find arguments of sin and cos that
+            # appears as bases in args of flat
+            # and have Integer exponents
+            args = defaultdict(set)
+            for fi in Mul.make_args(flat):
+                b, e = fi.as_base_exp()
+                if e.is_Integer and e > 0:
+                    if b.func in (cos, sin):
+                        args[type(b)].add(b.args[0])
+            return args
+        num_args, den_args = map(sincos_args, rv.as_numer_denom())
+        def handle_match(rv, num_args, den_args):
+            # for arg in sin args of num_args, look for arg/2
+            # in den_args and pass this half-angle to TR11
+            # for handling in rv
+            for narg in num_args[sin]:
+                half = narg/2
+                if half in den_args[cos]:
+                    func = cos
+                elif half in den_args[sin]:
+                    func = sin
+                else:
+                    continue
+                rv = TR11(rv, half)
+                den_args[func].remove(half)
+            return rv
+        # sin in num, sin or cos in den
+        rv = handle_match(rv, num_args, den_args)
+        # sin in den, sin or cos in num
+        rv = handle_match(rv, den_args, num_args)
+        return rv
+
+    return bottom_up(rv, f)
+
+
 def TR12(rv, first=True):
     """Separate sums in ``tan``.
 
     Examples
     ========
 
-    >>> from sympy.simplify.fu import TR12
     >>> from sympy.abc import x, y
     >>> from sympy import tan
     >>> from sympy.simplify.fu import TR12
     >>> TR12(tan(x + y))
-    (tan(x) + tan(y))/(-tan(x)*tan(y) + 1)
+    (tan(x) + tan(y))/(1 - tan(x)*tan(y))
     """
 
     def f(rv):
@@ -1052,7 +942,7 @@ def TR12(rv, first=True):
 
 def TR12i(rv):
     """Combine tan arguments as
-    (tan(y) + tan(x))/(tan(x)*tan(y) - 1) -> -tan(x + y)
+    (tan(y) + tan(x))/(tan(x)*tan(y) - 1) -> -tan(x + y).
 
     Examples
     ========
@@ -1071,8 +961,6 @@ def TR12i(rv):
     >>> TR12i(eq.expand())
     -3*tan(a + b)*tan(a + c)/(2*(tan(a) + tan(b) - 1))
     """
-    from sympy import factor, fraction, factor_terms
-
     def f(rv):
         if not (rv.is_Add or rv.is_Mul or rv.is_Pow):
             return rv
@@ -1088,73 +976,73 @@ def TR12i(rv):
             if m:
                 g, f, s = m
                 if s is S.NegativeOne and f.is_Mul and len(f.args) == 2 and \
-                        all(fi.func is tan for fi in f.args):
+                        all(isinstance(fi, tan) for fi in f.args):
                     return g, f
 
-        dargs = list(Mul.make_args(d))
-        for i, di in enumerate(dargs):
+        d_args = list(Mul.make_args(d))
+        for i, di in enumerate(d_args):
             m = ok(di)
             if m:
                 g, t = m
                 s = Add(*[_.args[0] for _ in t.args])
                 dok[s] = S.One
-                dargs[i] = g
+                d_args[i] = g
                 continue
             if di.is_Add:
                 di = factor(di)
                 if di.is_Mul:
-                    dargs.extend(di.args)
-                    dargs[i] = S.One
+                    d_args.extend(di.args)
+                    d_args[i] = S.One
             elif di.is_Pow and (di.exp.is_integer or di.base.is_positive):
                 m = ok(di.base)
                 if m:
                     g, t = m
                     s = Add(*[_.args[0] for _ in t.args])
                     dok[s] = di.exp
-                    dargs[i] = g**di.exp
+                    d_args[i] = g**di.exp
                 else:
                     di = factor(di)
                     if di.is_Mul:
-                        dargs.extend(di.args)
-                        dargs[i] = S.One
+                        d_args.extend(di.args)
+                        d_args[i] = S.One
         if not dok:
             return rv
 
         def ok(ni):
             if ni.is_Add and len(ni.args) == 2:
                 a, b = ni.args
-                if a.func is tan and b.func is tan:
+                if isinstance(a, tan) and isinstance(b, tan):
                     return a, b
-        nargs = list(Mul.make_args(factor_terms(n)))
+        n_args = list(Mul.make_args(factor_terms(n)))
         hit = False
-        for i, ni in enumerate(nargs):
+        for i, ni in enumerate(n_args):
             m = ok(ni)
             if not m:
                 m = ok(-ni)
                 if m:
-                    nargs[i] = S.NegativeOne
+                    n_args[i] = S.NegativeOne
                 else:
                     if ni.is_Add:
                         ni = factor(ni)
                         if ni.is_Mul:
-                            nargs.extend(ni.args)
-                            nargs[i] = S.One
+                            n_args.extend(ni.args)
+                            n_args[i] = S.One
                         continue
                     elif ni.is_Pow and (
                             ni.exp.is_integer or ni.base.is_positive):
                         m = ok(ni.base)
                         if m:
-                            nargs[i] = S.One
+                            n_args[i] = S.One
                         else:
                             ni = factor(ni)
                             if ni.is_Mul:
-                                nargs.extend(ni.args)
-                                nargs[i] = S.One
+                                n_args.extend(ni.args)
+                                n_args[i] = S.One
                             continue
                     else:
                         continue
             else:
-                nargs[i] = S.One
+                n_args[i] = S.One
             hit = True
             s = Add(*[_.args[0] for _ in m])
             ed = dok[s]
@@ -1164,10 +1052,10 @@ def TR12i(rv):
                     dok[s] = newed
                 else:
                     dok.pop(s)
-            nargs[i] *= -tan(s)
+            n_args[i] *= -tan(s)
 
         if hit:
-            rv = Mul(*nargs)/Mul(*dargs)/Mul(*[(Add(*[
+            rv = Mul(*n_args)/Mul(*d_args)/Mul(*[(Add(*[
                 tan(a) for a in i.args]) - 1)**e for i, e in dok.items()])
 
         return rv
@@ -1182,11 +1070,11 @@ def TR13(rv):
     ========
 
     >>> from sympy.simplify.fu import TR13
-    >>> from sympy import tan, cot, cos
+    >>> from sympy import tan, cot
     >>> TR13(tan(3)*tan(2))
     -tan(2)/tan(5) - tan(3)/tan(5) + 1
     >>> TR13(cot(3)*cot(2))
-    cot(2)*cot(5) + 1 + cot(3)*cot(5)
+    cot(2)*cot(5) + cot(3)*cot(5) + 1
     """
 
     def f(rv):
@@ -1195,9 +1083,9 @@ def TR13(rv):
 
         # XXX handle products of powers? or let power-reducing handle it?
         args = {tan: [], cot: [], None: []}
-        for a in ordered(Mul.make_args(rv)):
+        for a in Mul.make_args(rv):
             if a.func in (tan, cot):
-                args[a.func].append(a.args[0])
+                args[type(a)].append(a.args[0])
             else:
                 args[None].append(a)
         t = args[tan]
@@ -1277,20 +1165,23 @@ def TRmorrie(rv):
     References
     ==========
 
-    http://en.wikipedia.org/wiki/Morrie%27s_law
+    .. [1] https://en.wikipedia.org/wiki/Morrie%27s_law
 
     """
 
-    def f(rv):
+    def f(rv, first=True):
         if not rv.is_Mul:
             return rv
+        if first:
+            n, d = rv.as_numer_denom()
+            return f(n, 0)/f(d, 0)
 
         args = defaultdict(list)
         coss = {}
         other = []
         for c in rv.args:
             b, e = c.as_base_exp()
-            if e.is_Integer and b.func is cos:
+            if e.is_Integer and isinstance(b, cos):
                 co, a = b.args[0].as_coeff_Mul()
                 args[a].append(co)
                 coss[b] = e
@@ -1301,7 +1192,6 @@ def TRmorrie(rv):
         for a in args:
             c = args[a]
             c.sort()
-            no = []
             while c:
                 k = 0
                 cc = ci = c[0]
@@ -1327,8 +1217,8 @@ def TRmorrie(rv):
                             c.remove(cc)
                     new.append(newarg**take)
                 else:
-                    no.append(c.pop(0))
-            c[:] = no
+                    b = cos(c.pop(0)*a)
+                    other.append(b**coss[b])
 
         if new:
             rv = Mul(*(new + other + [
@@ -1429,7 +1319,7 @@ def TR14(rv, first=True):
                                 rem[e] -= take
                                 process.insert(0, rem)
 
-                            if A[f].func is cos:
+                            if isinstance(A[f], cos):
                                 t = sin
                             else:
                                 t = cos
@@ -1442,7 +1332,7 @@ def TR14(rv, first=True):
                         if A[si] != B[si]:
                             B = process.pop(0)
                             take = A[e]
-                            if A[f].func is cos:
+                            if isinstance(A[f], cos):
                                 t = sin
                             else:
                                 t = cos
@@ -1461,7 +1351,7 @@ def TR14(rv, first=True):
 
 
 def TR15(rv, max=4, pow=False):
-    """Convert sin(x)*-2 to 1 + cot(x)**2.
+    """Convert sin(x)**-2 to 1 + cot(x)**2.
 
     See _TR56 docstring for advanced use of ``max`` and ``pow``.
 
@@ -1470,15 +1360,19 @@ def TR15(rv, max=4, pow=False):
 
     >>> from sympy.simplify.fu import TR15
     >>> from sympy.abc import x
-    >>> from sympy import cos, sin
+    >>> from sympy import sin
     >>> TR15(1 - 1/sin(x)**2)
     -cot(x)**2
 
     """
 
     def f(rv):
-        if not (isinstance(rv, Pow) and rv.base.func is sin):
+        if not (isinstance(rv, Pow) and isinstance(rv.base, sin)):
             return rv
+
+        e = rv.exp
+        if e % 2 == 1:
+            return TR15(rv.base**(e + 1))/rv.base
 
         ia = 1/rv
         a = _TR56(ia, sin, cot, lambda x: 1 + x, max=max, pow=pow)
@@ -1490,7 +1384,7 @@ def TR15(rv, max=4, pow=False):
 
 
 def TR16(rv, max=4, pow=False):
-    """Convert cos(x)*-2 to 1 + tan(x)**2.
+    """Convert cos(x)**-2 to 1 + tan(x)**2.
 
     See _TR56 docstring for advanced use of ``max`` and ``pow``.
 
@@ -1499,15 +1393,19 @@ def TR16(rv, max=4, pow=False):
 
     >>> from sympy.simplify.fu import TR16
     >>> from sympy.abc import x
-    >>> from sympy import cos, sin
+    >>> from sympy import cos
     >>> TR16(1 - 1/cos(x)**2)
     -tan(x)**2
 
     """
 
     def f(rv):
-        if not (isinstance(rv, Pow) and rv.base.func is cos):
+        if not (isinstance(rv, Pow) and isinstance(rv.base, cos)):
             return rv
+
+        e = rv.exp
+        if e % 2 == 1:
+            return TR15(rv.base**(e + 1))/rv.base
 
         ia = 1/rv
         a = _TR56(ia, cos, tan, lambda x: 1 + x, max=max, pow=pow)
@@ -1529,7 +1427,7 @@ def TR111(rv):
     >>> from sympy.abc import x
     >>> from sympy import tan
     >>> TR111(1 - 1/tan(x)**2)
-    -cot(x)**2 + 1
+    1 - cot(x)**2
 
     """
 
@@ -1539,11 +1437,11 @@ def TR111(rv):
             (rv.base.is_positive or rv.exp.is_integer and rv.exp.is_negative)):
             return rv
 
-        if rv.base.func is tan:
+        if isinstance(rv.base, tan):
             return cot(rv.base.args[0])**-rv.exp
-        elif rv.base.func is sin:
+        elif isinstance(rv.base, sin):
             return csc(rv.base.args[0])**-rv.exp
-        elif rv.base.func is cos:
+        elif isinstance(rv.base, cos):
             return sec(rv.base.args[0])**-rv.exp
         return rv
 
@@ -1579,6 +1477,52 @@ def TR22(rv, max=4, pow=False):
     return bottom_up(rv, f)
 
 
+def TRpower(rv):
+    """Convert sin(x)**n and cos(x)**n with positive n to sums.
+
+    Examples
+    ========
+
+    >>> from sympy.simplify.fu import TRpower
+    >>> from sympy.abc import x
+    >>> from sympy import cos, sin
+    >>> TRpower(sin(x)**6)
+    -15*cos(2*x)/32 + 3*cos(4*x)/16 - cos(6*x)/32 + 5/16
+    >>> TRpower(sin(x)**3*cos(2*x)**4)
+    (3*sin(x)/4 - sin(3*x)/4)*(cos(4*x)/2 + cos(8*x)/8 + 3/8)
+
+    References
+    ==========
+
+    .. [1] https://en.wikipedia.org/wiki/List_of_trigonometric_identities#Power-reduction_formulae
+
+    """
+
+    def f(rv):
+        if not (isinstance(rv, Pow) and isinstance(rv.base, (sin, cos))):
+            return rv
+        b, n = rv.as_base_exp()
+        x = b.args[0]
+        if n.is_Integer and n.is_positive:
+            if n.is_odd and isinstance(b, cos):
+                rv = 2**(1-n)*Add(*[binomial(n, k)*cos((n - 2*k)*x)
+                    for k in range((n + 1)/2)])
+            elif n.is_odd and isinstance(b, sin):
+                rv = 2**(1-n)*S.NegativeOne**((n-1)/2)*Add(*[binomial(n, k)*
+                    S.NegativeOne**k*sin((n - 2*k)*x) for k in range((n + 1)/2)])
+            elif n.is_even and isinstance(b, cos):
+                rv = 2**(1-n)*Add(*[binomial(n, k)*cos((n - 2*k)*x)
+                    for k in range(n/2)])
+            elif n.is_even and isinstance(b, sin):
+                rv = 2**(1-n)*S.NegativeOne**(n/2)*Add(*[binomial(n, k)*
+                    S.NegativeOne**k*cos((n - 2*k)*x) for k in range(n/2)])
+            if n.is_even:
+                rv += 2**(-n)*binomial(n, n/2)
+        return rv
+
+    return bottom_up(rv, f)
+
+
 def L(rv):
     """Return count of trigonometric functions in expression.
 
@@ -1591,7 +1535,7 @@ def L(rv):
     >>> L(cos(x)+sin(x))
     2
     """
-    return S(rv.count(C.TrigonometricFunction))
+    return S(rv.count(TrigonometricFunction))
 
 
 # ============== end of basic Fu-like tools =====================
@@ -1619,7 +1563,7 @@ RL1 = (TR4, TR3, TR4, TR12, TR4, TR13, TR4, TR0)
 
 
 # XXX it's a little unclear how this one is to be implemented
-# see Fu paper of reference, page 7. What is the Union symbol refering to?
+# see Fu paper of reference, page 7. What is the Union symbol referring to?
 # The diagram shows all these as one chain of transformations, but the
 # text refers to them being applied independently. Also, a break
 # if L starts to increase has not been implemented.
@@ -1675,7 +1619,7 @@ def fu(rv, measure=lambda x: (L(x), x.count_ops())):
     Example 1
 
     >>> fu(1-sin(2*x)**2/4-sin(y)**2-cos(x)**4)
-    -cos(x)**2 + cos(y)**2
+    cos(y)**2 - cos(x)**2
 
     Example 2
 
@@ -1690,6 +1634,7 @@ def fu(rv, measure=lambda x: (L(x), x.count_ops())):
     -sqrt(3)
 
     Objective function example
+
     >>> fu(sin(x)/cos(x))  # default objective function
     tan(x)
     >>> fu(sin(x)/cos(x), measure=lambda x: -x.count_ops()) # maximize op count
@@ -1697,14 +1642,16 @@ def fu(rv, measure=lambda x: (L(x), x.count_ops())):
 
     References
     ==========
-    http://rfdz.ph-noe.ac.at/fileadmin/Mathematik_Uploads/ACDCA/
-    DESTIME2006/DES_contribs/Fu/simplification.pdf
+
+    .. [1] https://www.sciencedirect.com/science/article/pii/S0895717706001609
     """
     fRL1 = greedy(RL1, measure)
     fRL2 = greedy(RL2, measure)
 
     was = rv
     rv = sympify(rv)
+    if not isinstance(rv, Expr):
+        return rv.func(*[fu(a, measure=measure) for a in rv.args])
     rv = TR1(rv)
     if rv.has(tan, cot):
         rv1 = fRL1(rv)
@@ -1720,7 +1667,7 @@ def fu(rv, measure=lambda x: (L(x), x.count_ops())):
 
 
 def process_common_addends(rv, do, key2=None, key1=True):
-    """Apply ``do`` to addends of ``rv`` that (if key1=True) share at least
+    """Apply ``do`` to addends of ``rv`` that (if ``key1=True``) share at least
     a common absolute value of their coefficient and the value of ``key2`` when
     applied to the argument. If ``key1`` is False ``key2`` must be supplied and
     will be the only key applied.
@@ -1768,11 +1715,19 @@ fufuncs = '''
 FU = dict(list(zip(fufuncs, list(map(locals().get, fufuncs)))))
 
 
-def _roots():
-    global _ROOT2, _ROOT3, _invROOT3
-    _ROOT2, _ROOT3 = sqrt(2), sqrt(3)
-    _invROOT3 = 1/_ROOT3
-_ROOT2 = None
+@cacheit
+def _ROOT2():
+    return sqrt(2)
+
+
+@cacheit
+def _ROOT3():
+    return sqrt(3)
+
+
+@cacheit
+def _invROOT3():
+    return 1/sqrt(3)
 
 
 def trig_split(a, b, two=False):
@@ -1790,6 +1745,7 @@ def trig_split(a, b, two=False):
 
     Examples
     ========
+
     >>> from sympy.simplify.fu import trig_split
     >>> from sympy.abc import x, y, z
     >>> from sympy import cos, sin, sqrt
@@ -1824,10 +1780,6 @@ def trig_split(a, b, two=False):
     >>> trig_split(cos(x)*cos(y), sin(x)*sin(y))
     >>> trig_split(-sqrt(6)*cos(x), sqrt(2)*sin(x)*sin(y), two=True)
     """
-    global _ROOT2, _ROOT3, _invROOT3
-    if _ROOT2 is None:
-        _roots()
-
     a, b = [Factors(i) for i in (a, b)]
     ua, ub = a.normal(b)
     gcd = a.gcd(b).as_expr()
@@ -1871,9 +1823,9 @@ def trig_split(a, b, two=False):
             else:
                 args = [a]
             a = args.pop(0)
-            if a.func is cos:
+            if isinstance(a, cos):
                 c = a
-            elif a.func is sin:
+            elif isinstance(a, sin):
                 s = a
             elif a.is_Pow and a.exp is S.Half:  # autoeval doesn't allow -1/2
                 co *= a
@@ -1881,12 +1833,12 @@ def trig_split(a, b, two=False):
                 return None
             if args:
                 b = args[0]
-                if b.func is cos:
+                if isinstance(b, cos):
                     if c:
                         s = b
                     else:
                         c = b
-                elif b.func is sin:
+                elif isinstance(b, sin):
                     if s:
                         c = b
                     else:
@@ -1896,9 +1848,9 @@ def trig_split(a, b, two=False):
                 else:
                     return None
             return co if co is not S.One else None, c, s
-        elif a.func is cos:
+        elif isinstance(a, cos):
             c = a
-        elif a.func is sin:
+        elif isinstance(a, sin):
             s = a
         if c is None and s is None:
             return
@@ -1916,24 +1868,24 @@ def trig_split(a, b, two=False):
     cob, cb, sb = m
 
     # check them
-    if (not ca) and cb or ca and ca.func is sin:
+    if (not ca) and cb or ca and isinstance(ca, sin):
         coa, ca, sa, cob, cb, sb = cob, cb, sb, coa, ca, sa
         n1, n2 = n2, n1
     if not two:  # need cos(x) and cos(y) or sin(x) and sin(y)
         c = ca or sa
         s = cb or sb
-        if c.func is not s.func:
+        if not isinstance(c, s.func):
             return None
-        return gcd, n1, n2, c.args[0], s.args[0], c.func is cos
+        return gcd, n1, n2, c.args[0], s.args[0], isinstance(c, cos)
     else:
         if not coa and not cob:
             if (ca and cb and sa and sb):
-                if not ((ca.func is sa.func) is (cb.func is sb.func)):
+                if isinstance(ca, sa.func) is not isinstance(cb, sb.func):
                     return
-                args = set([j.args for j in (ca, sa)])
+                args = {j.args for j in (ca, sa)}
                 if not all(i.args in args for i in (cb, sb)):
                     return
-                return gcd, n1, n2, ca.args[0], sa.args[0], ca.func is sa.func
+                return gcd, n1, n2, ca.args[0], sa.args[0], isinstance(ca, sa.func)
         if ca and sa or cb and sb or \
             two and (ca is None and sa is None or cb is None and sb is None):
             return
@@ -1946,12 +1898,12 @@ def trig_split(a, b, two=False):
         if not cob:
             cob = S.One
         if coa is cob:
-            gcd *= _ROOT2
+            gcd *= _ROOT2()
             return gcd, n1, n2, c.args[0], pi/4, False
-        elif coa/cob == _ROOT3:
+        elif coa/cob == _ROOT3():
             gcd *= 2*cob
             return gcd, n1, n2, c.args[0], pi/3, False
-        elif coa/cob == _invROOT3:
+        elif coa/cob == _invROOT3():
             gcd *= 2*coa
             return gcd, n1, n2, c.args[0], pi/6, False
 
@@ -2013,58 +1965,82 @@ def as_f_sign_1(e):
         return gcd, a, n2
 
 
-def _osborne(e):
+def _osborne(e, d):
     """Replace all hyperbolic functions with trig functions using
     the Osborne rule.
+
+    Notes
+    =====
+
+    ``d`` is a dummy variable to prevent automatic evaluation
+    of trigonometric/hyperbolic functions.
+
 
     References
     ==========
 
-    http://en.wikipedia.org/wiki/Hyperbolic_function
+    .. [1] https://en.wikipedia.org/wiki/Hyperbolic_function
     """
 
     def f(rv):
-        if not isinstance(rv, C.HyperbolicFunction):
+        if not isinstance(rv, HyperbolicFunction):
             return rv
-        if rv.func is sinh:
-            return I*sin(rv.args[0])
-        elif rv.func is cosh:
-            return cos(rv.args[0])
-        elif rv.func is tanh:
-            return I*tan(rv.args[0])
-        elif rv.func is coth:
-            return cot(rv.args[0])/I
+        a = rv.args[0]
+        a = a*d if not a.is_Add else Add._from_args([i*d for i in a.args])
+        if isinstance(rv, sinh):
+            return I*sin(a)
+        elif isinstance(rv, cosh):
+            return cos(a)
+        elif isinstance(rv, tanh):
+            return I*tan(a)
+        elif isinstance(rv, coth):
+            return cot(a)/I
+        elif isinstance(rv, sech):
+            return sec(a)
+        elif isinstance(rv, csch):
+            return csc(a)/I
         else:
             raise NotImplementedError('unhandled %s' % rv.func)
 
     return bottom_up(e, f)
 
 
-def _osbornei(e):
+def _osbornei(e, d):
     """Replace all trig functions with hyperbolic functions using
     the Osborne rule.
+
+    Notes
+    =====
+
+    ``d`` is a dummy variable to prevent automatic evaluation
+    of trigonometric/hyperbolic functions.
 
     References
     ==========
 
-    http://en.wikipedia.org/wiki/Hyperbolic_function
+    .. [1] https://en.wikipedia.org/wiki/Hyperbolic_function
     """
 
     def f(rv):
-        if not isinstance(rv, C.TrigonometricFunction):
+        if not isinstance(rv, (TrigonometricFunction, HyperbolicFunction)):
             return rv
-        if rv.func is sin:
-            return sinh(rv.args[0])/I
-        elif rv.func is cos:
-            return cosh(rv.args[0])
-        elif rv.func is tan:
-            return tanh(rv.args[0])/I
-        elif rv.func is cot:
-            return coth(rv.args[0])*I
-        elif rv.func is sec:
-            return 1/cosh(rv.args[0])
-        elif rv.func is csc:
-            return I/sinh(rv.args[0])
+        if isinstance(rv, HyperbolicFunction):
+            a = rv.args[0].xreplace({d: I})
+            return rv.func(a)
+        const, x = rv.args[0].as_independent(d, as_Add=True)
+        a = x.xreplace({d: S.One}) + const*I
+        if isinstance(rv, sin):
+            return sinh(a)/I
+        elif isinstance(rv, cos):
+            return cosh(a)
+        elif isinstance(rv, tan):
+            return tanh(a)/I
+        elif isinstance(rv, cot):
+            return coth(a)*I
+        elif isinstance(rv, sec):
+            return sech(a)
+        elif isinstance(rv, csc):
+            return csch(a)*I
         else:
             raise NotImplementedError('unhandled %s' % rv.func)
 
@@ -2095,17 +2071,45 @@ def hyper_as_trig(rv):
     References
     ==========
 
-    http://en.wikipedia.org/wiki/Hyperbolic_function
+    .. [1] https://en.wikipedia.org/wiki/Hyperbolic_function
     """
     from sympy.simplify.simplify import signsimp
+    from sympy.simplify.radsimp import collect
 
-    # mask of trig functions
-    trigs = rv.atoms(C.TrigonometricFunction)
+    # mask off trig functions
+    trigs = rv.atoms(TrigonometricFunction)
     reps = [(t, Dummy()) for t in trigs]
     masked = rv.xreplace(dict(reps))
 
     # get inversion substitutions in place
     reps = [(v, k) for k, v in reps]
 
-    return _osborne(masked), lambda x: signsimp(
-        _osbornei(x).xreplace(dict(reps)))
+    d = Dummy()
+
+    return _osborne(masked, d), lambda x: collect(signsimp(
+        _osbornei(x, d).xreplace(dict(reps))), S.ImaginaryUnit)
+
+
+def sincos_to_sum(expr):
+    """Convert products and powers of sin and cos to sums.
+
+    Explanation
+    ===========
+
+    Applied power reduction TRpower first, then expands products, and
+    converts products to sums with TR8.
+
+    Examples
+    ========
+
+    >>> from sympy.simplify.fu import sincos_to_sum
+    >>> from sympy.abc import x
+    >>> from sympy import cos, sin
+    >>> sincos_to_sum(16*sin(x)**3*cos(2*x)**2)
+    7*sin(x) - 5*sin(3*x) + 3*sin(5*x) - sin(7*x)
+    """
+
+    if not expr.has(cos, sin):
+        return expr
+    else:
+        return TR8(expand_mul(TRpower(expr)))

@@ -1,31 +1,65 @@
 """Tests for useful utilities for higher level polynomial classes. """
+from __future__ import annotations
 
-from sympy import S, I, Integer, sin, cos, sqrt, symbols, pi, Eq, Integral
-from sympy.utilities.pytest import raises
+from sympy.core.mul import Mul
+from sympy.core.numbers import (Integer, pi)
+from sympy.core.relational import Eq
+from sympy.core.singleton import S
+from sympy.core.symbol import (Symbol, symbols)
+from sympy.functions.elementary.exponential import exp
+from sympy.functions.elementary.miscellaneous import sqrt
+from sympy.functions.elementary.trigonometric import (cos, sin)
+from sympy.integrals.integrals import Integral
+from sympy.testing.pytest import raises
 
 from sympy.polys.polyutils import (
+    _nsort,
     _sort_gens,
     _unify_gens,
     _analyze_gens,
     _sort_factors,
-    _parallel_dict_from_expr_if_gens,
+    _parallel_dict_from_expr,
     _parallel_dict_from_expr_no_gens,
-    _dict_from_expr_if_gens,
+    _dict_from_expr,
     _dict_from_expr_no_gens,
     parallel_dict_from_expr,
     dict_from_expr,
-    expr_from_dict,
 )
 
-from sympy.polys.polyerrors import (
-    GeneratorsNeeded,
-    PolynomialError,
-)
-
-from sympy.polys.domains import ZZ, QQ, EX
+from sympy.polys.polyerrors import PolynomialError
+from sympy.polys.polyoptions import build_options
+from sympy.polys.domains import ZZ
 
 x, y, z, p, q, r, s, t, u, v, w = symbols('x,y,z,p,q,r,s,t,u,v,w')
 A, B = symbols('A,B', commutative=False)
+
+
+def test__nsort():
+    # issue 6137
+    r = S('''[3/2 + sqrt(-14/3 - 2*(-415/216 + 13*I/12)**(1/3) - 4/sqrt(-7/3 +
+    61/(18*(-415/216 + 13*I/12)**(1/3)) + 2*(-415/216 + 13*I/12)**(1/3)) -
+    61/(18*(-415/216 + 13*I/12)**(1/3)))/2 - sqrt(-7/3 + 61/(18*(-415/216
+    + 13*I/12)**(1/3)) + 2*(-415/216 + 13*I/12)**(1/3))/2, 3/2 - sqrt(-7/3
+    + 61/(18*(-415/216 + 13*I/12)**(1/3)) + 2*(-415/216 +
+    13*I/12)**(1/3))/2 - sqrt(-14/3 - 2*(-415/216 + 13*I/12)**(1/3) -
+    4/sqrt(-7/3 + 61/(18*(-415/216 + 13*I/12)**(1/3)) + 2*(-415/216 +
+    13*I/12)**(1/3)) - 61/(18*(-415/216 + 13*I/12)**(1/3)))/2, 3/2 +
+    sqrt(-14/3 - 2*(-415/216 + 13*I/12)**(1/3) + 4/sqrt(-7/3 +
+    61/(18*(-415/216 + 13*I/12)**(1/3)) + 2*(-415/216 + 13*I/12)**(1/3)) -
+    61/(18*(-415/216 + 13*I/12)**(1/3)))/2 + sqrt(-7/3 + 61/(18*(-415/216
+    + 13*I/12)**(1/3)) + 2*(-415/216 + 13*I/12)**(1/3))/2, 3/2 + sqrt(-7/3
+    + 61/(18*(-415/216 + 13*I/12)**(1/3)) + 2*(-415/216 +
+    13*I/12)**(1/3))/2 - sqrt(-14/3 - 2*(-415/216 + 13*I/12)**(1/3) +
+    4/sqrt(-7/3 + 61/(18*(-415/216 + 13*I/12)**(1/3)) + 2*(-415/216 +
+    13*I/12)**(1/3)) - 61/(18*(-415/216 + 13*I/12)**(1/3)))/2]''')
+    ans = [r[1], r[0], r[-1], r[-2]]
+    assert _nsort(r) == ans
+    assert len(_nsort(r, separated=True)[0]) == 0
+    b, c, a = exp(-1000), exp(-999), exp(-1001)
+    assert _nsort((b, c, a)) == [a, b, c]
+    # issue 12560
+    a = cos(1)**2 + sin(1)**2 - 1
+    assert _nsort([a]) == [a]
 
 
 def test__sort_gens():
@@ -76,6 +110,11 @@ def test__sort_gens():
     assert _sort_gens([x, p, q], wrt='x', sort='q > p') == (x, q, p)
     assert _sort_gens([x, p, q], wrt='p', sort='q > x') == (p, q, x)
     assert _sort_gens([x, p, q], wrt='q', sort='p > x') == (q, p, x)
+
+    # https://github.com/sympy/sympy/issues/19353
+    n1 = Symbol('\n1')
+    assert _sort_gens([n1]) == (n1,)
+    assert _sort_gens([x, n1]) == (x, n1)
 
     X = symbols('x0,x1,x2,x10,x11,x12,x20,x21,x22')
 
@@ -208,7 +247,7 @@ def test__dict_from_expr_if_gens():
 
 
 def test__dict_from_expr_no_gens():
-    raises(GeneratorsNeeded, lambda: dict_from_expr(Integer(17)))
+    assert dict_from_expr(Integer(17)) == ({(): Integer(17)}, ())
 
     assert dict_from_expr(x) == ({(1,): Integer(1)}, (x,))
     assert dict_from_expr(y) == ({(1,): Integer(1)}, (y,))
@@ -218,7 +257,7 @@ def test__dict_from_expr_no_gens():
         x + y) == ({(1, 0): Integer(1), (0, 1): Integer(1)}, (x, y))
 
     assert dict_from_expr(sqrt(2)) == ({(1,): Integer(1)}, (sqrt(2),))
-    raises(GeneratorsNeeded, lambda: dict_from_expr(sqrt(2), greedy=False))
+    assert dict_from_expr(sqrt(2), greedy=False) == ({(): sqrt(2)}, ())
 
     assert dict_from_expr(x*y, domain=ZZ[x]) == ({(1,): x}, (y,))
     assert dict_from_expr(x*y, domain=ZZ[y]) == ({(1,): y}, (x,))
@@ -248,14 +287,39 @@ def test__parallel_dict_from_expr_no_gens():
     assert parallel_dict_from_expr([x*y, 2*z, Integer(3)]) == \
         ([{(1, 1, 0): Integer(
             1)}, {(0, 0, 1): Integer(2)}, {(0, 0, 0): Integer(3)}], (x, y, z))
+    assert parallel_dict_from_expr((Mul(x, x**2, evaluate=False),)) == \
+        ([{(3,): 1}], (x,))
 
 
 def test_parallel_dict_from_expr():
-    parallel_dict_from_expr([Eq(x, 1), Eq(
-        x**2, 2)]) == ([{(1,): Integer(1)}, {(2,): Integer(2)}], (x,))
+    assert parallel_dict_from_expr([Eq(x, 1), Eq(
+        x**2, 2)]) == ([{(0,): -Integer(1), (1,): Integer(1)},
+                        {(0,): -Integer(2), (2,): Integer(1)}], (x,))
     raises(PolynomialError, lambda: parallel_dict_from_expr([A*B - B*A]))
 
 
+def test_private_dict_from_expr_noncommutative():
+    expr = A*B - B*A
+
+    opt = build_options({})
+    raises(PolynomialError,
+        lambda: _parallel_dict_from_expr_no_gens([expr], opt))
+    raises(PolynomialError,
+        lambda: _dict_from_expr_no_gens(expr, opt))
+    raises(PolynomialError,
+        lambda: _parallel_dict_from_expr([expr], opt))
+    raises(PolynomialError,
+        lambda: _dict_from_expr(expr, opt))
+
+    opt = build_options({'gens': (x,)})
+    raises(PolynomialError,
+        lambda: _parallel_dict_from_expr([A*x], opt))
+    raises(PolynomialError,
+        lambda: _dict_from_expr(A*x, opt))
+
+
 def test_dict_from_expr():
-    dict_from_expr(Eq(x, 1)) == ({(1,): Integer(1)}, (x,))
+    assert dict_from_expr(Eq(x, 1)) == \
+        ({(0,): -Integer(1), (1,): Integer(1)}, (x,))
     raises(PolynomialError, lambda: dict_from_expr(A*B - B*A))
+    raises(PolynomialError, lambda: dict_from_expr(S.true))

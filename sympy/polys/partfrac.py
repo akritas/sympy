@@ -1,16 +1,15 @@
 """Algorithms for partial fraction decomposition of rational functions. """
+from __future__ import annotations
 
-from __future__ import print_function, division
 
+from sympy.core import S, Add, sympify, Function, Lambda, Dummy
+from sympy.core.traversal import preorder_traversal
 from sympy.polys import Poly, RootSum, cancel, factor
-from sympy.polys.polytools import parallel_poly_from_expr
-from sympy.polys.polyoptions import allowed_flags, set_defaults
 from sympy.polys.polyerrors import PolynomialError
-
-from sympy.core import S, Add, sympify, Function, Lambda, Dummy, Expr
-from sympy.core.basic import preorder_traversal
+from sympy.polys.polyoptions import allowed_flags, set_defaults
+from sympy.polys.polytools import parallel_poly_from_expr
 from sympy.utilities import numbered_symbols, take, xthreaded, public
-from sympy.core.compatibility import xrange
+
 
 @xthreaded
 @public
@@ -18,10 +17,21 @@ def apart(f, x=None, full=False, **options):
     """
     Compute partial fraction decomposition of a rational function.
 
-    Given a rational function ``f`` compute partial fraction decomposition
-    of ``f``. Two algorithms are available: one is based on undetermined
-    coefficients method and the other is Bronstein's full partial fraction
-    decomposition algorithm.
+    Given a rational function ``f``, computes the partial fraction
+    decomposition of ``f``. Two algorithms are available: One is based on the
+    undetermined coefficients method, the other is Bronstein's full partial
+    fraction decomposition algorithm.
+
+    The undetermined coefficients method (selected by ``full=False``) uses
+    polynomial factorization (and therefore accepts the same options as
+    factor) for the denominator. Per default it works over the rational
+    numbers, therefore decomposition of denominators with non-rational roots
+    (e.g. irrational, complex roots) is not supported by default (see options
+    of factor).
+
+    Bronstein's algorithm can be selected by using ``full=True`` and allows a
+    decomposition of denominators with non-rational roots. A human-readable
+    result can be obtained via ``doit()`` (see examples below).
 
     Examples
     ========
@@ -32,14 +42,24 @@ def apart(f, x=None, full=False, **options):
     By default, using the undetermined coefficients method:
 
     >>> apart(y/(x + 2)/(x + 1), x)
-    -y/(x + 2) + y/(x + 1)
+    y/(x + 1) - y/(x + 2)
 
-    You can choose Bronstein's algorithm by setting ``full=True``:
+    The undetermined coefficients method does not provide a result when the
+    denominators roots are not rational:
 
     >>> apart(y/(x**2 + x + 1), x)
     y/(x**2 + x + 1)
+
+    You can choose Bronstein's algorithm by setting ``full=True``:
+
     >>> apart(y/(x**2 + x + 1), x, full=True)
-    RootSum(_w**2 + _w + 1, Lambda(_a, (-2*_a*y/3 - y/3)/(-_a + x)))
+    RootSum(w**2 + w + 1, Lambda(w, (-2*w*y/3 - y/3)/(x - w)))
+
+    Calling ``doit()`` yields a human-readable result:
+
+    >>> apart(y/(x**2 + x + 1), x, full=True).doit()
+    (-2*y*(-1/2 - sqrt(3)*I/2)/3 - y/3)/(x + sqrt(3)*I/2 + 1/2) + (-2*y*(-1/2 + sqrt(3)*I/2)/3 - y/3)/(x - sqrt(3)*I/2 + 1/2)
+
 
     See Also
     ========
@@ -65,7 +85,7 @@ def apart(f, x=None, full=False, **options):
         # non-commutative
         if f.is_Mul:
             c, nc = f.args_cnc(split_1=False)
-            nc = f.func(*[apart(i, x=x, full=full, **_options) for i in nc])
+            nc = f.func(*nc)
             if c:
                 c = apart(f.func._from_args(c), x=x, full=full, **_options)
                 return c*nc
@@ -137,7 +157,7 @@ def apart_undetermined_coeffs(P, Q):
     for f, k in factors:
         n, q = f.degree(), Q
 
-        for i in xrange(1, k + 1):
+        for i in range(1, k + 1):
             coeffs, q = take(X, n), q.quo(f)
             partial.append((coeffs, q, f, i))
             symbols.extend(coeffs)
@@ -151,7 +171,7 @@ def apart_undetermined_coeffs(P, Q):
         q = q.set_domain(dom)
         F += h*q
 
-    system, result = [], S(0)
+    system, result = [], S.Zero
 
     for (k,), coeff in F.terms():
         system.append(coeff - P.nth(k))
@@ -182,7 +202,7 @@ def apart_full_decomposition(P, Q):
     References
     ==========
 
-    1. [Bronstein93]_
+    .. [1] [Bronstein93]_
 
     """
     return assemble_partfrac_list(apart_list(P/Q, P.gens[0]))
@@ -235,9 +255,7 @@ def apart_list(f, x=None, dummies=None, **options):
     >>> f = (2*x**3 - 2*x) / (x**2 - 2*x + 1)
     >>> pfd = apart_list(f)
     >>> pfd
-    (1,
-    Poly(2*x + 4, x, domain='ZZ'),
-    [(Poly(_w - 1, _w, domain='ZZ'), Lambda(_a, 4), Lambda(_a, -_a + x), 1)])
+    (1, Poly(2*x + 4, x, domain='ZZ'), [(Poly(_w - 1, _w, domain='ZZ'), Lambda(_a, 4), Lambda(_a, x - _a), 1)])
 
     >>> assemble_partfrac_list(pfd)
     2*x + 4 + 4/(x - 1)
@@ -247,37 +265,26 @@ def apart_list(f, x=None, dummies=None, **options):
     >>> f = (-2*x - 2*x**2) / (3*x**2 - 6*x)
     >>> pfd = apart_list(f)
     >>> pfd
-    (-1,
-    Poly(2/3, x, domain='QQ'),
-    [(Poly(_w - 2, _w, domain='ZZ'), Lambda(_a, 2), Lambda(_a, -_a + x), 1)])
+    (-1, Poly(2/3, x, domain='QQ'), [(Poly(_w - 2, _w, domain='ZZ'), Lambda(_a, 2), Lambda(_a, x - _a), 1)])
 
     >>> assemble_partfrac_list(pfd)
-    -2/3 - 2/(x - 2)
+    -2/(x - 2) - 2/3
 
     Another example, showing symbolic parameters:
 
     >>> pfd = apart_list(t/(x**2 + x + t), x)
     >>> pfd
-    (1,
-    Poly(0, x, domain='ZZ[t]'),
-    [(Poly(_w**2 + _w + t, _w, domain='ZZ[t]'),
-    Lambda(_a, -2*_a*t/(4*t - 1) - t/(4*t - 1)),
-    Lambda(_a, -_a + x),
-    1)])
+    (1, Poly(0, x, domain='ZZ[t]'), [(Poly(_w**2 + _w + t, _w, domain='ZZ[t]'), Lambda(_a, -2*_a*t/(4*t - 1) - t/(4*t - 1)), Lambda(_a, x - _a), 1)])
 
     >>> assemble_partfrac_list(pfd)
-    RootSum(_w**2 + _w + t, Lambda(_a, (-2*_a*t/(4*t - 1) - t/(4*t - 1))/(-_a + x)))
+    RootSum(t + w**2 + w, Lambda(w, (-2*t*w/(4*t - 1) - t/(4*t - 1))/(x - w)))
 
     This example is taken from Bronstein's original paper:
 
     >>> f = 36 / (x**5 - 2*x**4 - 2*x**3 + 4*x**2 + x - 2)
     >>> pfd = apart_list(f)
     >>> pfd
-    (1,
-    Poly(0, x, domain='ZZ'),
-    [(Poly(_w - 2, _w, domain='ZZ'), Lambda(_a, 4), Lambda(_a, -_a + x), 1),
-    (Poly(_w**2 - 1, _w, domain='ZZ'), Lambda(_a, -3*_a - 6), Lambda(_a, -_a + x), 2),
-    (Poly(_w + 1, _w, domain='ZZ'), Lambda(_a, -4), Lambda(_a, -_a + x), 1)])
+    (1, Poly(0, x, domain='ZZ'), [(Poly(_w - 2, _w, domain='ZZ'), Lambda(_a, 4), Lambda(_a, x - _a), 1), (Poly(_w**2 - 1, _w, domain='ZZ'), Lambda(_a, -3*_a - 6), Lambda(_a, x - _a), 2), (Poly(_w + 1, _w, domain='ZZ'), Lambda(_a, -4), Lambda(_a, x - _a), 1)])
 
     >>> assemble_partfrac_list(pfd)
     -4/(x + 1) - 3/(x + 1)**2 - 9/(x - 1)**2 + 4/(x - 2)
@@ -290,7 +297,7 @@ def apart_list(f, x=None, dummies=None, **options):
     References
     ==========
 
-    1. [Bronstein93]_
+    .. [1] [Bronstein93]_
 
     """
     allowed_flags(options, [])
@@ -345,10 +352,10 @@ def apart_list_full_decomposition(P, Q, dummygen):
     References
     ==========
 
-    1. [Bronstein93]_
+    .. [1] [Bronstein93]_
 
     """
-    f, x, U = P/Q, P.gen, []
+    P_orig, Q_orig, x, U = P, Q, P.gen, []
 
     u = Function('u')(x)
     a = Dummy('a')
@@ -359,7 +366,7 @@ def apart_list_full_decomposition(P, Q, dummygen):
         b = d.as_expr()
         U += [ u.diff(x, n - 1) ]
 
-        h = cancel(f*b**n) / u**n
+        h = cancel(P_orig/Q_orig.quo(d**n)) / u**n
 
         H, subs = [h], []
 
@@ -407,16 +414,12 @@ def assemble_partfrac_list(partial_list):
     This example is taken from Bronstein's original paper:
 
     >>> from sympy.polys.partfrac import apart_list, assemble_partfrac_list
-    >>> from sympy.abc import x, y
+    >>> from sympy.abc import x
 
     >>> f = 36 / (x**5 - 2*x**4 - 2*x**3 + 4*x**2 + x - 2)
     >>> pfd = apart_list(f)
     >>> pfd
-    (1,
-    Poly(0, x, domain='ZZ'),
-    [(Poly(_w - 2, _w, domain='ZZ'), Lambda(_a, 4), Lambda(_a, -_a + x), 1),
-    (Poly(_w**2 - 1, _w, domain='ZZ'), Lambda(_a, -3*_a - 6), Lambda(_a, -_a + x), 2),
-    (Poly(_w + 1, _w, domain='ZZ'), Lambda(_a, -4), Lambda(_a, -_a + x), 1)])
+    (1, Poly(0, x, domain='ZZ'), [(Poly(_w - 2, _w, domain='ZZ'), Lambda(_a, 4), Lambda(_a, x - _a), 1), (Poly(_w**2 - 1, _w, domain='ZZ'), Lambda(_a, -3*_a - 6), Lambda(_a, x - _a), 2), (Poly(_w + 1, _w, domain='ZZ'), Lambda(_a, -4), Lambda(_a, x - _a), 1)])
 
     >>> assemble_partfrac_list(pfd)
     -4/(x + 1) - 3/(x + 1)**2 - 9/(x - 1)**2 + 4/(x - 2)
@@ -425,28 +428,23 @@ def assemble_partfrac_list(partial_list):
 
     >>> pfd = apart_list(2/(x**2-2))
     >>> pfd
-    (1,
-    Poly(0, x, domain='ZZ'),
-    [(Poly(_w**2 - 2, _w, domain='ZZ'),
-    Lambda(_a, _a/2),
-    Lambda(_a, -_a + x),
-    1)])
+    (1, Poly(0, x, domain='ZZ'), [(Poly(_w**2 - 2, _w, domain='ZZ'), Lambda(_a, _a/2), Lambda(_a, x - _a), 1)])
 
     >>> pfda = assemble_partfrac_list(pfd)
     >>> pfda
-    RootSum(_w**2 - 2, Lambda(_a, _a/(-_a + x)))/2
+    RootSum(w**2 - 2, Lambda(w, w/(x - w)))/2
 
     >>> pfda.doit()
-    -sqrt(2)/(2*(x + sqrt(2))) + sqrt(2)/(2*(x - sqrt(2)))
+    sqrt(2)/(2*(x - sqrt(2))) - sqrt(2)/(2*(x + sqrt(2)))
 
     >>> from sympy import Dummy, Poly, Lambda, sqrt
     >>> a = Dummy("a")
     >>> pfd = (1, Poly(0, x, domain='ZZ'), [([sqrt(2),-sqrt(2)], Lambda(a, a/2), Lambda(a, -a + x), 1)])
 
     >>> assemble_partfrac_list(pfd)
-    -sqrt(2)/(2*(x + sqrt(2))) + sqrt(2)/(2*(x - sqrt(2)))
+    sqrt(2)/(2*(x - sqrt(2))) - sqrt(2)/(2*(x + sqrt(2)))
 
-    See also
+    See Also
     ========
 
     apart, apart_list
@@ -466,10 +464,10 @@ def assemble_partfrac_list(partial_list):
             ad, de = df.variables, df.expr
             # Hack to make dummies equal because Lambda created new Dummies
             de = de.subs(ad[0], an[0])
-            func = Lambda(an, nu/de**ex)
+            func = Lambda(tuple(an), nu/de**ex)
             pfd += RootSum(r, func, auto=False, quadratic=False)
         else:
-            # Assemble in case the roots are given explicitely by a list of algebraic numbers
+            # Assemble in case the roots are given explicitly by a list of algebraic numbers
             for root in r:
                 pfd += nf(root)/df(root)**ex
 

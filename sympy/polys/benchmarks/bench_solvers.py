@@ -1,5 +1,4 @@
-from __future__ import print_function, division
-
+from __future__ import annotations
 from sympy.polys.rings import ring
 from sympy.polys.fields import field
 from sympy.polys.domains import ZZ, QQ
@@ -242,18 +241,21 @@ def sol_165x165():
     }
 
 def time_eqs_165x165():
-    assert len(eqs_165x165()) == 165
+    if len(eqs_165x165()) != 165:
+        raise ValueError("length should be 165")
 
 def time_solve_lin_sys_165x165():
     eqs = eqs_165x165()
     sol = solve_lin_sys(eqs, R_165)
-    assert sol == sol_165x165()
+    if sol != sol_165x165():
+        raise ValueError("Value should be equal")
 
 def time_verify_sol_165x165():
     eqs = eqs_165x165()
     sol = sol_165x165()
     zeros = [ eq.compose(sol) for eq in eqs ]
-    assert all([ zero == 0 for zero in zeros ])
+    if not all(zero == 0 for zero in zeros):
+        raise ValueError("All should be 0")
 
 def time_to_expr_eqs_165x165():
     eqs = eqs_165x165()
@@ -471,18 +473,20 @@ def sol_189x49():
     }
 
 def time_eqs_189x49():
-    assert len(eqs_189x49()) == 189
+    if len(eqs_189x49()) != 189:
+        raise ValueError("Length should be equal to 189")
 
 def time_solve_lin_sys_189x49():
     eqs = eqs_189x49()
     sol = solve_lin_sys(eqs, R_49)
-    assert sol == sol_189x49()
+    if sol != sol_189x49():
+        raise ValueError("Values should be equal")
 
 def time_verify_sol_189x49():
     eqs = eqs_189x49()
     sol = sol_189x49()
     zeros = [ eq.compose(sol) for eq in eqs ]
-    assert all([ zero == 0 for zero in zeros ])
+    assert all(zero == 0 for zero in zeros)
 
 def time_to_expr_eqs_189x49():
     eqs = eqs_189x49()
@@ -519,18 +523,21 @@ def sol_10x8():
     }
 
 def time_eqs_10x8():
-    assert len(eqs_10x8()) == 10
+    if len(eqs_10x8()) != 10:
+        raise ValueError("Value should be equal to 10")
 
 def time_solve_lin_sys_10x8():
     eqs = eqs_10x8()
     sol = solve_lin_sys(eqs, R_8)
-    assert sol == sol_10x8()
+    if sol != sol_10x8():
+        raise ValueError("Values should be equal")
 
 def time_verify_sol_10x8():
     eqs = eqs_10x8()
     sol = sol_10x8()
     zeros = [ eq.compose(sol) for eq in eqs ]
-    assert all([ zero == 0 for zero in zeros ])
+    if not all(zero == 0 for zero in zeros):
+        raise ValueError("All values in zero should be 0")
 
 def time_to_expr_eqs_10x8():
     eqs = eqs_10x8()

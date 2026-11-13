@@ -1,89 +1,456 @@
 """Module for querying SymPy objects about assumptions."""
-from __future__ import print_function, division
+from __future__ import annotations
 
-from sympy.core import sympify
-from sympy.logic.boolalg import to_cnf, And, Not, Or, Implies, Equivalent, BooleanFunction
-from sympy.logic.inference import satisfiable
 from sympy.assumptions.assume import (global_assumptions, Predicate,
         AppliedPredicate)
+from sympy.assumptions.cnf import CNF, EncodedCNF, Literal
+from sympy.core import sympify
+from sympy.core.kind import BooleanKind
+from sympy.core.relational import Eq, Ne, Gt, Lt, Ge, Le
+from sympy.logic.inference import satisfiable
+from sympy.logic.boolalg import And
+from sympy.utilities.decorator import memoize_property
 
 
-class Q:
-    """Supported ask keys."""
-    antihermitian = Predicate('antihermitian')
-    bounded = Predicate('bounded')
-    commutative = Predicate('commutative')
-    complex = Predicate('complex')
-    composite = Predicate('composite')
-    even = Predicate('even')
-    extended_real = Predicate('extended_real')
-    hermitian = Predicate('hermitian')
-    imaginary = Predicate('imaginary')
-    infinitesimal = Predicate('infinitesimal')
-    infinity = Predicate('infinity')
-    integer = Predicate('integer')
-    irrational = Predicate('irrational')
-    rational = Predicate('rational')
-    negative = Predicate('negative')
-    nonzero = Predicate('nonzero')
-    positive = Predicate('positive')
-    prime = Predicate('prime')
-    real = Predicate('real')
-    odd = Predicate('odd')
-    is_true = Predicate('is_true')
-    symmetric = Predicate('symmetric')
-    invertible = Predicate('invertible')
-    singular = Predicate('singular')
-    orthogonal = Predicate('orthogonal')
-    unitary = Predicate('unitary')
-    normal = Predicate('normal')
-    positive_definite = Predicate('positive_definite')
-    upper_triangular = Predicate('upper_triangular')
-    lower_triangular = Predicate('lower_triangular')
-    diagonal = Predicate('diagonal')
-    triangular = Predicate('triangular')
-    unit_triangular = Predicate('unit_triangular')
-    fullrank = Predicate('fullrank')
-    square = Predicate('square')
-    real_elements = Predicate('real_elements')
-    complex_elements = Predicate('complex_elements')
-    integer_elements = Predicate('integer_elements')
+# Memoization is necessary for the properties of AssumptionKeys to
+# ensure that only one object of Predicate objects are created.
+# This is because assumption handlers are registered on those objects.
 
 
-def _extract_facts(expr, symbol):
+class AssumptionKeys:
     """
-    Helper for ask().
+    This class contains all the supported keys by ``ask``.
+    It should be accessed via the instance ``sympy.Q``.
 
-    Extracts the facts relevant to the symbol from an assumption.
-    Returns None if there is nothing to extract.
     """
-    if isinstance(expr, bool):
-        return
-    if not expr.has(symbol):
-        return None
-    if isinstance(expr, AppliedPredicate):
-        if expr.arg == symbol:
-            return expr.func
+
+    # DO NOT add methods or properties other than predicate keys.
+    # SAT solver checks the properties of Q and use them to compute the
+    # fact system. Non-predicate attributes will break this.
+
+    @memoize_property
+    def hermitian(self):
+        from .handlers.sets import HermitianPredicate
+        return HermitianPredicate()
+
+    @memoize_property
+    def antihermitian(self):
+        from .handlers.sets import AntihermitianPredicate
+        return AntihermitianPredicate()
+
+    @memoize_property
+    def real(self):
+        from .handlers.sets import RealPredicate
+        return RealPredicate()
+
+    @memoize_property
+    def extended_real(self):
+        from .handlers.sets import ExtendedRealPredicate
+        return ExtendedRealPredicate()
+
+    @memoize_property
+    def imaginary(self):
+        from .handlers.sets import ImaginaryPredicate
+        return ImaginaryPredicate()
+
+    @memoize_property
+    def complex(self):
+        from .handlers.sets import ComplexPredicate
+        return ComplexPredicate()
+
+    @memoize_property
+    def algebraic(self):
+        from .handlers.sets import AlgebraicPredicate
+        return AlgebraicPredicate()
+
+    @memoize_property
+    def transcendental(self):
+        from .handlers.sets import TranscendentalPredicate
+        return TranscendentalPredicate()
+
+    @memoize_property
+    def integer(self):
+        from .handlers.sets import IntegerPredicate
+        return IntegerPredicate()
+
+    @memoize_property
+    def noninteger(self):
+        from .predicates.sets import NonIntegerPredicate
+        return NonIntegerPredicate()
+
+    @memoize_property
+    def rational(self):
+        from .handlers.sets import RationalPredicate
+        return RationalPredicate()
+
+    @memoize_property
+    def irrational(self):
+        from .handlers.sets import IrrationalPredicate
+        return IrrationalPredicate()
+
+    @memoize_property
+    def finite(self):
+        from .handlers.calculus import FinitePredicate
+        return FinitePredicate()
+
+    @memoize_property
+    def infinite(self):
+        from .handlers.calculus import InfinitePredicate
+        return InfinitePredicate()
+
+    @memoize_property
+    def positive_infinite(self):
+        from .handlers.calculus import PositiveInfinitePredicate
+        return PositiveInfinitePredicate()
+
+    @memoize_property
+    def negative_infinite(self):
+        from .handlers.calculus import NegativeInfinitePredicate
+        return NegativeInfinitePredicate()
+
+    @memoize_property
+    def positive(self):
+        from .handlers.order import PositivePredicate
+        return PositivePredicate()
+
+    @memoize_property
+    def negative(self):
+        from .handlers.order import NegativePredicate
+        return NegativePredicate()
+
+    @memoize_property
+    def zero(self):
+        from .handlers.order import ZeroPredicate
+        return ZeroPredicate()
+
+    @memoize_property
+    def extended_positive(self):
+        from .handlers.order import ExtendedPositivePredicate
+        return ExtendedPositivePredicate()
+
+    @memoize_property
+    def extended_negative(self):
+        from .handlers.order import ExtendedNegativePredicate
+        return ExtendedNegativePredicate()
+
+    @memoize_property
+    def nonzero(self):
+        from .handlers.order import NonZeroPredicate
+        return NonZeroPredicate()
+
+    @memoize_property
+    def nonpositive(self):
+        from .handlers.order import NonPositivePredicate
+        return NonPositivePredicate()
+
+    @memoize_property
+    def nonnegative(self):
+        from .handlers.order import NonNegativePredicate
+        return NonNegativePredicate()
+
+    @memoize_property
+    def extended_nonzero(self):
+        from .handlers.order import ExtendedNonZeroPredicate
+        return ExtendedNonZeroPredicate()
+
+    @memoize_property
+    def extended_nonpositive(self):
+        from .handlers.order import ExtendedNonPositivePredicate
+        return ExtendedNonPositivePredicate()
+
+    @memoize_property
+    def extended_nonnegative(self):
+        from .handlers.order import ExtendedNonNegativePredicate
+        return ExtendedNonNegativePredicate()
+
+    @memoize_property
+    def even(self):
+        from .handlers.ntheory import EvenPredicate
+        return EvenPredicate()
+
+    @memoize_property
+    def odd(self):
+        from .handlers.ntheory import OddPredicate
+        return OddPredicate()
+
+    @memoize_property
+    def prime(self):
+        from .handlers.ntheory import PrimePredicate
+        return PrimePredicate()
+
+    @memoize_property
+    def composite(self):
+        from .handlers.ntheory import CompositePredicate
+        return CompositePredicate()
+
+    @memoize_property
+    def commutative(self):
+        from .handlers.common import CommutativePredicate
+        return CommutativePredicate()
+
+    @memoize_property
+    def is_true(self):
+        from .handlers.common import IsTruePredicate
+        return IsTruePredicate()
+
+    @memoize_property
+    def symmetric(self):
+        from .handlers.matrices import SymmetricPredicate
+        return SymmetricPredicate()
+
+    @memoize_property
+    def invertible(self):
+        from .handlers.matrices import InvertiblePredicate
+        return InvertiblePredicate()
+
+    @memoize_property
+    def orthogonal(self):
+        from .handlers.matrices import OrthogonalPredicate
+        return OrthogonalPredicate()
+
+    @memoize_property
+    def unitary(self):
+        from .handlers.matrices import UnitaryPredicate
+        return UnitaryPredicate()
+
+    @memoize_property
+    def positive_definite(self):
+        from .handlers.matrices import PositiveDefinitePredicate
+        return PositiveDefinitePredicate()
+
+    @memoize_property
+    def upper_triangular(self):
+        from .handlers.matrices import UpperTriangularPredicate
+        return UpperTriangularPredicate()
+
+    @memoize_property
+    def lower_triangular(self):
+        from .handlers.matrices import LowerTriangularPredicate
+        return LowerTriangularPredicate()
+
+    @memoize_property
+    def diagonal(self):
+        from .handlers.matrices import DiagonalPredicate
+        return DiagonalPredicate()
+
+    @memoize_property
+    def fullrank(self):
+        from .handlers.matrices import FullRankPredicate
+        return FullRankPredicate()
+
+    @memoize_property
+    def square(self):
+        from .handlers.matrices import SquarePredicate
+        return SquarePredicate()
+
+    @memoize_property
+    def integer_elements(self):
+        from .handlers.matrices import IntegerElementsPredicate
+        return IntegerElementsPredicate()
+
+    @memoize_property
+    def real_elements(self):
+        from .handlers.matrices import RealElementsPredicate
+        return RealElementsPredicate()
+
+    @memoize_property
+    def complex_elements(self):
+        from .handlers.matrices import ComplexElementsPredicate
+        return ComplexElementsPredicate()
+
+    @memoize_property
+    def singular(self):
+        from .predicates.matrices import SingularPredicate
+        return SingularPredicate()
+
+    @memoize_property
+    def normal(self):
+        from .predicates.matrices import NormalPredicate
+        return NormalPredicate()
+
+    @memoize_property
+    def triangular(self):
+        from .predicates.matrices import TriangularPredicate
+        return TriangularPredicate()
+
+    @memoize_property
+    def unit_triangular(self):
+        from .predicates.matrices import UnitTriangularPredicate
+        return UnitTriangularPredicate()
+
+    @memoize_property
+    def eq(self):
+        from .relation.equality import EqualityPredicate
+        return EqualityPredicate()
+
+    @memoize_property
+    def ne(self):
+        from .relation.equality import UnequalityPredicate
+        return UnequalityPredicate()
+
+    @memoize_property
+    def gt(self):
+        from .relation.equality import StrictGreaterThanPredicate
+        return StrictGreaterThanPredicate()
+
+    @memoize_property
+    def ge(self):
+        from .relation.equality import GreaterThanPredicate
+        return GreaterThanPredicate()
+
+    @memoize_property
+    def lt(self):
+        from .relation.equality import StrictLessThanPredicate
+        return StrictLessThanPredicate()
+
+    @memoize_property
+    def le(self):
+        from .relation.equality import LessThanPredicate
+        return LessThanPredicate()
+
+
+Q = AssumptionKeys()
+
+def _extract_all_facts(assump, exprs):
+    """
+    Extract all relevant assumptions from *assump* with respect to given *exprs*.
+
+    Parameters
+    ==========
+
+    assump : sympy.assumptions.cnf.CNF
+
+    exprs : tuple of expressions
+
+    Returns
+    =======
+
+    sympy.assumptions.cnf.CNF
+
+    Examples
+    ========
+
+    >>> from sympy import Q
+    >>> from sympy.assumptions.cnf import CNF
+    >>> from sympy.assumptions.ask import _extract_all_facts
+    >>> from sympy.abc import x, y
+    >>> assump = CNF.from_prop(Q.positive(x) & Q.integer(y))
+    >>> exprs = (x,)
+    >>> cnf = _extract_all_facts(assump, exprs)
+    >>> cnf.clauses
+    {frozenset({Literal(Q.positive, False)})}
+
+    """
+    facts = set()
+
+    for clause in assump.clauses:
+        args = []
+        for literal in clause:
+            if isinstance(literal.lit, AppliedPredicate) and len(literal.lit.arguments) == 1:
+                if literal.lit.arg in exprs:
+                    # Add literal if it has matching in it
+                    args.append(Literal(literal.lit.function, literal.is_Not))
+                else:
+                    # If any of the literals doesn't have matching expr don't add the whole clause.
+                    break
+            else:
+                # If any of the literals aren't unary predicate don't add the whole clause.
+                break
+
         else:
-            return
-    args = [_extract_facts(arg, symbol) for arg in expr.args]
-    if isinstance(expr, And):
-        return expr.func(*[x for x in args if x is not None])
-    if all(arg != None for arg in args):
-        return expr.func(*args)
+            if args:
+                facts.add(frozenset(args))
+    return CNF(facts)
 
+def _normalize_applied_predicates(expr):
+    # Replace Q.gt(a,b) with Q.lt(b,a)
+    expr = expr.replace(
+        lambda e: hasattr(e, 'function') and e.function == Q.gt,
+        lambda e: Q.lt(e.arguments[1], e.arguments[0])
+    )
+    # Replace Q.ge(a,b) with Q.le(b,a)
+    expr = expr.replace(
+        lambda e: hasattr(e, 'function') and e.function == Q.ge,
+        lambda e: Q.le(e.arguments[1], e.arguments[0])
+    )
+    return expr
+
+def _normalize_relations(expr):
+    def _filter(e):
+        return isinstance(e, (Gt, Ge, Lt, Le, Eq, Ne))
+
+    def _replace(e):
+        a, b = e.args
+        if isinstance(e, Gt):
+            return Q.lt(b, a)
+        elif isinstance(e, Ge):
+            return Q.le(b, a)
+        elif isinstance(e, Lt):
+            return Q.lt(a, b)
+        elif isinstance(e, Le):
+            return Q.le(a, b)
+        elif isinstance(e, Eq):
+            return Q.eq(a, b)
+        elif isinstance(e, Ne):
+            return Q.ne(a, b)
+        return e
+
+    return expr.replace(_filter, _replace)
+
+
+def _normalize_expr(expr):
+    expr = _normalize_relations(expr)
+    expr = _normalize_applied_predicates(expr)
+    return expr
 
 def ask(proposition, assumptions=True, context=global_assumptions):
     """
-    Method for inferring properties about objects.
+    Function to evaluate the proposition with assumptions.
+
+    Explanation
+    ===========
+
+    This function evaluates the proposition to ``True`` or ``False`` if
+    the truth value can be determined. If not, it returns ``None``.
+
+    It should be discerned from :func:`~.refine` which, when applied to a
+    proposition, simplifies the argument to symbolic ``Boolean`` instead of
+    Python built-in ``True``, ``False`` or ``None``.
 
     **Syntax**
 
         * ask(proposition)
+            Evaluate the *proposition* in global assumption context.
 
         * ask(proposition, assumptions)
+            Evaluate the *proposition* with respect to *assumptions* in
+            global assumption context.
 
-            where ``proposition`` is any boolean expression
+    Parameters
+    ==========
+
+    proposition : Boolean
+        Proposition which will be evaluated to boolean value. If this is
+        not ``AppliedPredicate``, it will be wrapped by ``Q.is_true``.
+
+    assumptions : Boolean, optional
+        Local assumptions to evaluate the *proposition*.
+
+    context : AssumptionsContext, optional
+        Default assumptions to evaluate the *proposition*. By default,
+        this is ``sympy.assumptions.global_assumptions`` variable.
+
+    Returns
+    =======
+
+    ``True``, ``False``, or ``None``
+
+    Raises
+    ======
+
+    TypeError : *proposition* or *assumptions* is not valid logical expression.
+
+    ValueError : assumptions are inconsistent.
 
     Examples
     ========
@@ -94,261 +461,205 @@ def ask(proposition, assumptions=True, context=global_assumptions):
     False
     >>> ask(Q.even(x*y), Q.even(x) & Q.integer(y))
     True
-    >>> ask(Q.prime(x*y), Q.integer(x) &  Q.integer(y))
+    >>> ask(Q.prime(4*x), Q.integer(x))
     False
 
-    **Remarks**
-        Relations in assumptions are not implemented (yet), so the following
-        will not give a meaningful result.
+    If the truth value cannot be determined, ``None`` will be returned.
 
-        >>> ask(Q.positive(x), Q.is_true(x > 0)) # doctest: +SKIP
+    >>> print(ask(Q.odd(3*x))) # cannot determine unless we know x
+    None
 
-        It is however a work in progress.
+    ``ValueError`` is raised if assumptions are inconsistent.
 
+    >>> ask(Q.integer(x), Q.even(x) & Q.odd(x))
+    Traceback (most recent call last):
+      ...
+    ValueError: inconsistent assumptions Q.even(x) & Q.odd(x)
+
+    Notes
+    =====
+
+    Relations in assumptions are not implemented (yet), so the following
+    will not give a meaningful result.
+
+    >>> ask(Q.positive(x), x > 0)
+
+    It is however a work in progress.
+
+    See Also
+    ========
+
+    sympy.assumptions.refine.refine : Simplification using assumptions.
+        Proposition is not reduced to ``None`` if the truth value cannot
+        be determined.
     """
-    if not isinstance(proposition, (BooleanFunction, AppliedPredicate, bool)):
+    from sympy.assumptions.satask import satask
+    from sympy.assumptions.lra_satask import lra_satask
+    from sympy.logic.algorithms.lra_theory import UnhandledInput
+
+    assumptions = And(assumptions, *context)
+
+    proposition = sympify(proposition)
+    assumptions = sympify(assumptions)
+
+    if isinstance(proposition, Predicate) or proposition.kind is not BooleanKind:
         raise TypeError("proposition must be a valid logical expression")
 
-    if not isinstance(assumptions, (BooleanFunction, AppliedPredicate, bool)):
+    if isinstance(assumptions, Predicate) or assumptions.kind is not BooleanKind:
         raise TypeError("assumptions must be a valid logical expression")
 
+    # Normalize both proposition and assumptions
+    proposition = _normalize_expr(proposition)
+    assumptions = _normalize_expr(assumptions)
+
     if isinstance(proposition, AppliedPredicate):
-        key, expr = proposition.func, sympify(proposition.arg)
+        key, args = proposition.function, proposition.arguments
     else:
-        key, expr = Q.is_true, sympify(proposition)
+        key, args = Q.is_true, (proposition,)
 
-    assumptions = And(assumptions, And(*context))
-    local_facts = _extract_facts(assumptions, expr)
+    # convert local and global assumptions to CNF
+    assump_cnf = CNF.from_prop(assumptions)
 
-    if local_facts is not None and satisfiable(And(local_facts, known_facts_cnf)) is False:
-        raise ValueError("inconsistent assumptions %s" % assumptions)
+    # extract the relevant facts from assumptions with respect to args
+    local_facts = _extract_all_facts(assump_cnf, args)
 
-    # direct resolution method, no logic
-    res = key(expr)._eval_ask(assumptions)
+    # convert default facts and assumed facts to encoded CNF
+    known_facts_cnf = get_all_known_facts()
+    enc_cnf = EncodedCNF()
+    enc_cnf.from_cnf(CNF(known_facts_cnf))
+    enc_cnf.add_from_cnf(local_facts)
+
+    # check the satisfiability of given assumptions
+    if local_facts.clauses and satisfiable(enc_cnf) is False:
+        raise ValueError(f"inconsistent assumptions {assumptions}")
+
+    # quick computation for single fact
+    res = _ask_single_fact(key, local_facts)
     if res is not None:
         return res
 
-    if assumptions is True:
-        return
+    # direct resolution method, no logic
+    res = key(*args)._eval_ask(assumptions)
+    if res is not None:
+        return bool(res)
 
-    if local_facts in (None, True):
-        return
+    # using satask (still costly)
+    res = satask(proposition, assumptions=assumptions)
+    if res is not None:
+        return res
 
-    # See if there's a straight-forward conclusion we can make for the inference
-    if local_facts.is_Atom:
-        if key in known_facts_dict[local_facts]:
-            return True
-        if Not(key) in known_facts_dict[local_facts]:
-            return False
-    elif local_facts.func is And and all(k in known_facts_dict for k in local_facts.args):
-        for assum in local_facts.args:
-            if assum.is_Atom:
-                if key in known_facts_dict[assum]:
-                    return True
-                if Not(key) in known_facts_dict[assum]:
-                    return False
-            elif assum.func is Not and assum.args[0].is_Atom:
-                if key in known_facts_dict[assum]:
-                    return False
-                if Not(key) in known_facts_dict[assum]:
-                    return True
-    elif (isinstance(key, Predicate) and
-            local_facts.func is Not and local_facts.args[0].is_Atom):
-        if local_facts.args[0] in known_facts_dict[key]:
-            return False
+    try:
+        res = lra_satask(proposition, assumptions=assumptions)
+    except UnhandledInput:
+        return None
 
-    # Failing all else, we do a full logical inference
-    return ask_full_inference(key, local_facts, known_facts_cnf)
+    return res
 
 
-def ask_full_inference(proposition, assumptions, known_facts_cnf):
+def _ask_single_fact(key, local_facts):
     """
-    Method for inferring properties about objects.
+    Determine whether the key is directly implied or refuted by any unit clause in local_facts.
 
+    Parameters
+    ==========
+
+    key : sympy.assumptions.assume.Predicate
+        Proposition predicate.
+
+    local_facts : sympy.assumptions.cnf.CNF
+        Local assumption in CNF form.
+
+    Returns
+    =======
+
+    ``True``, ``False`` or ``None``
+
+    Examples
+    ========
+
+    >>> from sympy import Q
+    >>> from sympy.assumptions.cnf import CNF
+    >>> from sympy.assumptions.ask import _ask_single_fact
+
+    If prerequisite of proposition is rejected by the assumption,
+    return ``False``.
+
+    >>> key, assump = Q.zero, ~Q.zero
+    >>> local_facts = CNF.from_prop(assump)
+    >>> _ask_single_fact(key, local_facts)
+    False
+    >>> key, assump = Q.zero, ~Q.even
+    >>> local_facts = CNF.from_prop(assump)
+    >>> _ask_single_fact(key, local_facts)
+    False
+
+    If assumption implies the proposition, return ``True``.
+
+    >>> key, assump = Q.even, Q.zero
+    >>> local_facts = CNF.from_prop(assump)
+    >>> _ask_single_fact(key, local_facts)
+    True
+
+    If proposition rejects the assumption, return ``False``.
+
+    >>> key, assump = Q.even, Q.odd
+    >>> local_facts = CNF.from_prop(assump)
+    >>> _ask_single_fact(key, local_facts)
+    False
     """
-    if not satisfiable(And(known_facts_cnf, assumptions, proposition)):
-        return False
-    if not satisfiable(And(known_facts_cnf, assumptions, Not(proposition))):
-        return True
+    if not local_facts.clauses:
+        return None
+
+    known_facts_dict = get_known_facts_dict()
+    get_facts = lambda k: known_facts_dict.get(k, (set(), set()))
+
+    for clause in local_facts.clauses:
+        if len(clause) != 1:
+            continue
+        (f,) = clause
+        pred, negated = f.arg, f.is_Not
+
+        # Negative literal
+        key_req, _ = get_facts(key)
+        if negated and pred in key_req:
+            # If key implies pred and pred is false,
+            # then key must be false.
+            return False
+
+        # Positive literal
+        if not negated:
+            req, rej = get_facts(pred)
+            if key in req:
+                # key is implied by pred
+                return True
+            if key in rej:
+                # ~key is implied by pred
+                return False
+
     return None
 
 
-def register_handler(key, handler):
+def _ask_recursive(proposition, assumptions=True):
     """
-    Register a handler in the ask system. key must be a string and handler a
-    class inheriting from AskHandler::
-
-        >>> from sympy.assumptions import register_handler, ask, Q
-        >>> from sympy.assumptions.handlers import AskHandler
-        >>> class MersenneHandler(AskHandler):
-        ...     # Mersenne numbers are in the form 2**n + 1, n integer
-        ...     @staticmethod
-        ...     def Integer(expr, assumptions):
-        ...         import math
-        ...         return ask(Q.integer(math.log(expr + 1, 2)))
-        >>> register_handler('mersenne', MersenneHandler)
-        >>> ask(Q.mersenne(7))
-        True
-
+    Answers query by relying only on recursive handlers and `_ask_single_fact`
+    and avoiding expensive SAT solver queries.
     """
-    if type(key) is Predicate:
-        key = key.name
-    try:
-        getattr(Q, key).add_handler(handler)
-    except AttributeError:
-        setattr(Q, key, Predicate(key, handlers=[handler]))
+    if isinstance(proposition, AppliedPredicate):
+        key, args = proposition.function, proposition.arguments
+    else:
+        key, args = Q.is_true, (proposition,)
+
+    assump_cnf = CNF.from_prop(assumptions)
+    local_facts = _extract_all_facts(assump_cnf, args)
+
+    res = _ask_single_fact(key, local_facts)
+    if res is not None:
+        return res
+
+    res = key(*args)._eval_ask(assumptions)
+    if res is not None:
+        return bool(res)
 
 
-def remove_handler(key, handler):
-    """Removes a handler from the ask system. Same syntax as register_handler"""
-    if type(key) is Predicate:
-        key = key.name
-    getattr(Q, key).remove_handler(handler)
-
-
-def single_fact_lookup(known_facts_keys, known_facts_cnf):
-    # Compute the quick lookup for single facts
-    mapping = {}
-    for key in known_facts_keys:
-        mapping[key] = set([key])
-        for other_key in known_facts_keys:
-            if other_key != key:
-                if ask_full_inference(other_key, key, known_facts_cnf):
-                    mapping[key].add(other_key)
-    return mapping
-
-
-def compute_known_facts(known_facts, known_facts_keys):
-    """Compute the various forms of knowledge compilation used by the
-    assumptions system.
-
-    This function is typically applied to the variables
-    ``known_facts`` and ``known_facts_keys`` defined at the bottom of
-    this file.
-    """
-    from textwrap import dedent, wrap
-
-    fact_string = dedent('''\
-    """
-    The contents of this file are the return value of
-    ``sympy.assumptions.ask.compute_known_facts``.  Do NOT manually
-    edit this file.
-    """
-
-    from sympy.logic.boolalg import And, Not, Or
-    from sympy.assumptions.ask import Q
-
-    # -{ Known facts in CNF }-
-    known_facts_cnf = And(
-        %s
-    )
-
-    # -{ Known facts in compressed sets }-
-    known_facts_dict = {
-        %s
-    }
-    ''')
-    # Compute the known facts in CNF form for logical inference
-    LINE = ",\n    "
-    HANG = ' '*8
-    cnf = to_cnf(known_facts)
-    c = LINE.join([str(a) for a in cnf.args])
-    mapping = single_fact_lookup(known_facts_keys, cnf)
-    m = LINE.join(['\n'.join(
-        wrap("%s: %s" % item,
-            subsequent_indent=HANG,
-            break_long_words=False))
-        for item in mapping.items()]) + ','
-    return fact_string % (c, m)
-
-# handlers_dict tells us what ask handler we should use
-# for a particular key
-_val_template = 'sympy.assumptions.handlers.%s'
-_handlers = [
-    ("antihermitian",     "sets.AskAntiHermitianHandler"),
-    ("bounded",           "calculus.AskBoundedHandler"),
-    ("commutative",       "AskCommutativeHandler"),
-    ("complex",           "sets.AskComplexHandler"),
-    ("composite",         "ntheory.AskCompositeHandler"),
-    ("even",              "ntheory.AskEvenHandler"),
-    ("extended_real",     "sets.AskExtendedRealHandler"),
-    ("hermitian",         "sets.AskHermitianHandler"),
-    ("imaginary",         "sets.AskImaginaryHandler"),
-    ("infinitesimal",     "calculus.AskInfinitesimalHandler"),
-    ("integer",           "sets.AskIntegerHandler"),
-    ("irrational",        "sets.AskIrrationalHandler"),
-    ("rational",          "sets.AskRationalHandler"),
-    ("negative",          "order.AskNegativeHandler"),
-    ("nonzero",           "order.AskNonZeroHandler"),
-    ("positive",          "order.AskPositiveHandler"),
-    ("prime",             "ntheory.AskPrimeHandler"),
-    ("real",              "sets.AskRealHandler"),
-    ("odd",               "ntheory.AskOddHandler"),
-    ("algebraic",         "sets.AskAlgebraicHandler"),
-    ("is_true",           "TautologicalHandler"),
-    ("symmetric",         "matrices.AskSymmetricHandler"),
-    ("invertible",        "matrices.AskInvertibleHandler"),
-    ("orthogonal",        "matrices.AskOrthogonalHandler"),
-    ("unitary",           "matrices.AskUnitaryHandler"),
-    ("positive_definite", "matrices.AskPositiveDefiniteHandler"),
-    ("upper_triangular",  "matrices.AskUpperTriangularHandler"),
-    ("lower_triangular",  "matrices.AskLowerTriangularHandler"),
-    ("diagonal",          "matrices.AskDiagonalHandler"),
-    ("fullrank",          "matrices.AskFullRankHandler"),
-    ("square",            "matrices.AskSquareHandler"),
-    ("integer_elements",  "matrices.AskIntegerElementsHandler"),
-    ("real_elements",     "matrices.AskRealElementsHandler"),
-    ("complex_elements",  "matrices.AskComplexElementsHandler"),
-]
-for name, value in _handlers:
-    register_handler(name, _val_template % value)
-
-
-known_facts_keys = [getattr(Q, attr) for attr in Q.__dict__
-                    if not attr.startswith('__')]
-known_facts = And(
-    Implies(Q.real, Q.complex),
-    Implies(Q.real, Q.hermitian),
-    Equivalent(Q.even, Q.integer & ~Q.odd),
-    Equivalent(Q.extended_real, Q.real | Q.infinity),
-    Equivalent(Q.odd, Q.integer & ~Q.even),
-    Equivalent(Q.prime, Q.integer & Q.positive & ~Q.composite),
-    Implies(Q.integer, Q.rational),
-    Implies(Q.rational, Q.algebraic),
-    Implies(Q.algebraic, Q.complex),
-    Implies(Q.imaginary, Q.complex & ~Q.real),
-    Implies(Q.imaginary, Q.antihermitian),
-    Implies(Q.antihermitian, ~Q.hermitian),
-    Equivalent(Q.negative, Q.nonzero & ~Q.positive),
-    Equivalent(Q.positive, Q.nonzero & ~Q.negative),
-    Equivalent(Q.rational, Q.real & ~Q.irrational),
-    Equivalent(Q.real, Q.rational | Q.irrational),
-    Implies(Q.nonzero, Q.real),
-    Equivalent(Q.nonzero, Q.positive | Q.negative),
-
-    Implies(Q.orthogonal, Q.positive_definite),
-    Implies(Q.orthogonal, Q.unitary),
-    Implies(Q.unitary & Q.real, Q.orthogonal),
-    Implies(Q.unitary, Q.normal),
-    Implies(Q.unitary, Q.invertible),
-    Implies(Q.normal, Q.square),
-    Implies(Q.diagonal, Q.normal),
-    Implies(Q.positive_definite, Q.invertible),
-    Implies(Q.diagonal, Q.upper_triangular),
-    Implies(Q.diagonal, Q.lower_triangular),
-    Implies(Q.lower_triangular, Q.triangular),
-    Implies(Q.upper_triangular, Q.triangular),
-    Implies(Q.triangular, Q.upper_triangular | Q.lower_triangular),
-    Implies(Q.upper_triangular & Q.lower_triangular, Q.diagonal),
-    Implies(Q.diagonal, Q.symmetric),
-    Implies(Q.unit_triangular, Q.triangular),
-    Implies(Q.invertible, Q.fullrank),
-    Implies(Q.invertible, Q.square),
-    Implies(Q.symmetric, Q.square),
-    Implies(Q.fullrank & Q.square, Q.invertible),
-    Equivalent(Q.invertible, ~Q.singular),
-    Implies(Q.integer_elements, Q.real_elements),
-    Implies(Q.real_elements, Q.complex_elements),
-)
-
-from sympy.assumptions.ask_generated import known_facts_dict, known_facts_cnf
+from sympy.assumptions.ask_generated import (get_all_known_facts,
+    get_known_facts_dict)

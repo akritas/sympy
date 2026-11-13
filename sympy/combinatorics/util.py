@@ -1,38 +1,37 @@
-from __future__ import print_function, division
-
-from sympy.ntheory import isprime
+from __future__ import annotations
 from sympy.combinatorics.permutations import Permutation, _af_invert, _af_rmul
-from sympy.core.compatibility import xrange
+from sympy.ntheory import isprime
 
 rmul = Permutation.rmul
 _af_new = Permutation._af_new
 
 ############################################
-###
-### Utilities for computational group theory
-###
+#
+# Utilities for computational group theory
+#
 ############################################
 
 
 def _base_ordering(base, degree):
     r"""
-    Order `\{0, 1, ..., n-1\}` so that base points come first and in order.
+    Order `\{0, 1, \dots, n-1\}` so that base points come first and in order.
 
     Parameters
     ==========
 
-    ``base`` - the base
-    ``degree`` - the degree of the associated permutation group
+    base : the base
+    degree : the degree of the associated permutation group
 
     Returns
     =======
 
     A list ``base_ordering`` such that ``base_ordering[point]`` is the
     number of ``point`` in the ordering.
+
     Examples
     ========
 
-    >>> from sympy.combinatorics.named_groups import SymmetricGroup
+    >>> from sympy.combinatorics import SymmetricGroup
     >>> from sympy.combinatorics.util import _base_ordering
     >>> S = SymmetricGroup(4)
     >>> S.schreier_sims()
@@ -42,27 +41,27 @@ def _base_ordering(base, degree):
     Notes
     =====
 
-    This is used in backtrack searches, when we define a relation `<<` on
+    This is used in backtrack searches, when we define a relation `\ll` on
     the underlying set for a permutation group of degree `n`,
-    `\{0, 1, ..., n-1\}`, so that if `(b_1, b_2, ..., b_k)` is a base we
-    have `b_i << b_j` whenever `i<j` and `b_i << a` for all
-    `i\in\{1,2, ..., k\}` and `a` is not in the base. The idea is developed
+    `\{0, 1, \dots, n-1\}`, so that if `(b_1, b_2, \dots, b_k)` is a base we
+    have `b_i \ll b_j` whenever `i<j` and `b_i \ll a` for all
+    `i\in\{1,2, \dots, k\}` and `a` is not in the base. The idea is developed
     and applied to backtracking algorithms in [1], pp.108-132. The points
     that are not in the base are taken in increasing order.
 
     References
     ==========
 
-    [1] Holt, D., Eick, B., O'Brien, E.
-    "Handbook of computational group theory"
+    .. [1] Holt, D., Eick, B., O'Brien, E.
+           "Handbook of computational group theory"
 
     """
     base_len = len(base)
     ordering = [0]*degree
-    for i in xrange(base_len):
+    for i in range(base_len):
         ordering[base[i]] = i
     current = base_len
-    for i in xrange(degree):
+    for i in range(degree):
         if i not in base:
             ordering[i] = current
             current += 1
@@ -73,6 +72,9 @@ def _check_cycles_alt_sym(perm):
     """
     Checks for cycles of prime length p with n/2 < p < n-2.
 
+    Explanation
+    ===========
+
     Here `n` is the degree of the permutation. This is a helper function for
     the function is_alt_sym from sympy.combinatorics.perm_groups.
 
@@ -80,11 +82,11 @@ def _check_cycles_alt_sym(perm):
     ========
 
     >>> from sympy.combinatorics.util import _check_cycles_alt_sym
-    >>> from sympy.combinatorics.permutations import Permutation
-    >>> a = Permutation([[0,1,2,3,4,5,6,7,8,9,10], [11, 12]])
+    >>> from sympy.combinatorics import Permutation
+    >>> a = Permutation([[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10], [11, 12]])
     >>> _check_cycles_alt_sym(a)
     False
-    >>> b = Permutation([[0,1,2,3,4,5,6], [7,8,9,10]])
+    >>> b = Permutation([[0, 1, 2, 3, 4, 5, 6], [7, 8, 9, 10]])
     >>> _check_cycles_alt_sym(b)
     True
 
@@ -99,12 +101,12 @@ def _check_cycles_alt_sym(perm):
     current_len = 0
     total_len = 0
     used = set()
-    for i in xrange(n//2):
-        if not i in used and i < n//2 - total_len:
+    for i in range(n//2):
+        if i not in used and i < n//2 - total_len:
             current_len = 1
             used.add(i)
             j = i
-            while(af[j] != i):
+            while af[j] != i:
                 current_len += 1
                 j = af[j]
                 used.add(j)
@@ -115,45 +117,45 @@ def _check_cycles_alt_sym(perm):
 
 
 def _distribute_gens_by_base(base, gens):
-    """
+    r"""
     Distribute the group elements ``gens`` by membership in basic stabilizers.
 
-    Notice that for a base `(b_1, b_2, ..., b_k)`, the basic stabilizers
-    are defined as `G^{(i)} = G_{b_1, ..., b_{i-1}}` for
-    `i \in\{1, 2, ..., k\}`.
+    Explanation
+    ===========
+
+    Notice that for a base `(b_1, b_2, \dots, b_k)`, the basic stabilizers
+    are defined as `G^{(i)} = G_{b_1, \dots, b_{i-1}}` for
+    `i \in\{1, 2, \dots, k\}`.
 
     Parameters
     ==========
 
-    ``base`` - a sequence of points in `\{0, 1, ..., n-1\}`
-    ``gens`` - a list of elements of a permutation group of degree `n`.
+    base : a sequence of points in `\{0, 1, \dots, n-1\}`
+    gens : a list of elements of a permutation group of degree `n`.
 
     Returns
     =======
-
-    List of length `k`, where `k` is
-    the length of ``base``. The `i`-th entry contains those elements in
-    ``gens`` which fix the first `i` elements of ``base`` (so that the
-    `0`-th entry is equal to ``gens`` itself). If no element fixes the first
-    `i` elements of ``base``, the `i`-th element is set to a list containing
-    the identity element.
+    list
+        List of length `k`, where `k` is the length of *base*. The `i`-th entry
+        contains those elements in *gens* which fix the first `i` elements of
+        *base* (so that the `0`-th entry is equal to *gens* itself). If no
+        element fixes the first `i` elements of *base*, the `i`-th element is
+        set to a list containing the identity element.
 
     Examples
     ========
 
-    >>> from sympy.combinatorics import Permutation
-    >>> Permutation.print_cyclic = True
     >>> from sympy.combinatorics.named_groups import DihedralGroup
     >>> from sympy.combinatorics.util import _distribute_gens_by_base
     >>> D = DihedralGroup(3)
     >>> D.schreier_sims()
     >>> D.strong_gens
-    [Permutation(0, 1, 2), Permutation(0, 2), Permutation(1, 2)]
+    [(0 1 2), (0 2), (1 2)]
     >>> D.base
     [0, 1]
     >>> _distribute_gens_by_base(D.base, D.strong_gens)
-    [[Permutation(0, 1, 2), Permutation(0, 2), Permutation(1, 2)],
-     [Permutation(1, 2)]]
+    [[(0 1 2), (0 2), (1 2)],
+     [(1 2)]]
 
     See Also
     ========
@@ -164,7 +166,7 @@ def _distribute_gens_by_base(base, gens):
     """
     base_len = len(base)
     degree = gens[0].size
-    stabs = [[] for _ in xrange(base_len)]
+    stabs = [[] for _ in range(base_len)]
     max_stab_index = 0
     for gen in gens:
         j = 0
@@ -172,16 +174,20 @@ def _distribute_gens_by_base(base, gens):
             j += 1
         if j > max_stab_index:
             max_stab_index = j
-        for k in xrange(j + 1):
+        for k in range(j + 1):
             stabs[k].append(gen)
     for i in range(max_stab_index + 1, base_len):
         stabs[i].append(_af_new(list(range(degree))))
     return stabs
 
+
 def _handle_precomputed_bsgs(base, strong_gens, transversals=None,
                              basic_orbits=None, strong_gens_distr=None):
     """
     Calculate BSGS-related structures from those present.
+
+    Explanation
+    ===========
 
     The base and strong generating set must be provided; if any of the
     transversals, basic orbits or distributed strong generators are not
@@ -190,43 +196,35 @@ def _handle_precomputed_bsgs(base, strong_gens, transversals=None,
     Parameters
     ==========
 
-    ``base`` - the base
-    ``strong_gens`` - the strong generators
-    ``transversals`` - basic transversals
-    ``basic_orbits`` - basic orbits
-    ``strong_gens_distr`` - strong generators distributed by membership in basic
-    stabilizers
+    base : the base
+    strong_gens : the strong generators
+    transversals : basic transversals
+    basic_orbits : basic orbits
+    strong_gens_distr : strong generators distributed by membership in basic stabilizers
 
     Returns
     =======
 
-    ``(transversals, basic_orbits, strong_gens_distr)`` where ``transversals``
-    are the basic transversals, ``basic_orbits`` are the basic orbits, and
-    ``strong_gens_distr`` are the strong generators distributed by membership
-    in basic stabilizers.
+    (transversals, basic_orbits, strong_gens_distr)
+        where *transversals* are the basic transversals, *basic_orbits* are the
+        basic orbits, and *strong_gens_distr* are the strong generators distributed
+        by membership in basic stabilizers.
 
     Examples
     ========
 
-    >>> from sympy.combinatorics import Permutation
-    >>> Permutation.print_cyclic = True
     >>> from sympy.combinatorics.named_groups import DihedralGroup
     >>> from sympy.combinatorics.util import _handle_precomputed_bsgs
     >>> D = DihedralGroup(3)
     >>> D.schreier_sims()
     >>> _handle_precomputed_bsgs(D.base, D.strong_gens,
     ... basic_orbits=D.basic_orbits)
-    ([{0: Permutation(2), 1: Permutation(0, 1, 2), 2: Permutation(0, 2)},
-    {1: Permutation(2), 2: Permutation(1, 2)}],
-    [[0, 1, 2], [1, 2]], [[Permutation(0, 1, 2),
-                           Permutation(0, 2),
-                           Permutation(1, 2)],
-                          [Permutation(1, 2)]])
+    ([{0: (2), 1: (0 1 2), 2: (0 2)}, {1: (2), 2: (1 2)}], [[0, 1, 2], [1, 2]], [[(0 1 2), (0 2), (1 2)], [(1 2)]])
 
     See Also
     ========
 
-    _orbits_transversals_from_bsgs, distribute_gens_by_base
+    _orbits_transversals_from_bsgs, _distribute_gens_by_base
 
     """
     if strong_gens_distr is None:
@@ -249,9 +247,12 @@ def _handle_precomputed_bsgs(base, strong_gens, transversals=None,
 
 
 def _orbits_transversals_from_bsgs(base, strong_gens_distr,
-                                   transversals_only=False):
+                                   transversals_only=False, slp=False):
     """
     Compute basic orbits and transversals from a base and strong generating set.
+
+    Explanation
+    ===========
 
     The generators are provided as distributed across the basic stabilizers.
     If the optional argument ``transversals_only`` is set to True, only the
@@ -260,28 +261,27 @@ def _orbits_transversals_from_bsgs(base, strong_gens_distr,
     Parameters
     ==========
 
-    ``base`` - the base
-    ``strong_gens_distr`` - strong generators distributed by membership in basic
-    stabilizers
-    ``transversals_only`` - a flag swithing between returning only the
-    transversals/ both orbits and transversals
+    base : The base.
+    strong_gens_distr : Strong generators distributed by membership in basic stabilizers.
+    transversals_only : bool, default: False
+        A flag switching between returning only the
+        transversals and both orbits and transversals.
+    slp : bool, default: False
+        If ``True``, return a list of dictionaries containing the
+        generator presentations of the elements of the transversals,
+        i.e. the list of indices of generators from ``strong_gens_distr[i]``
+        such that their product is the relevant transversal element.
 
     Examples
     ========
 
-    >>> from sympy.combinatorics import Permutation
-    >>> Permutation.print_cyclic = True
-    >>> from sympy.combinatorics.named_groups import SymmetricGroup
-    >>> from sympy.combinatorics.util import _orbits_transversals_from_bsgs
-    >>> from sympy.combinatorics.util import (_orbits_transversals_from_bsgs,
-    ... _distribute_gens_by_base)
+    >>> from sympy.combinatorics import SymmetricGroup
+    >>> from sympy.combinatorics.util import _distribute_gens_by_base
     >>> S = SymmetricGroup(3)
     >>> S.schreier_sims()
     >>> strong_gens_distr = _distribute_gens_by_base(S.base, S.strong_gens)
-    >>> _orbits_transversals_from_bsgs(S.base, strong_gens_distr)
-    ([[0, 1, 2], [1, 2]],
-    [{0: Permutation(2), 1: Permutation(0, 1, 2), 2: Permutation(0, 2, 1)},
-    {1: Permutation(2), 2: Permutation(1, 2)}])
+    >>> (S.base, strong_gens_distr)
+    ([0, 1], [[(0 1 2), (2)(0 1), (1 2)], [(1 2)]])
 
     See Also
     ========
@@ -293,17 +293,21 @@ def _orbits_transversals_from_bsgs(base, strong_gens_distr,
     base_len = len(base)
     degree = strong_gens_distr[0][0].size
     transversals = [None]*base_len
+    slps = [None]*base_len
     if transversals_only is False:
         basic_orbits = [None]*base_len
-    for i in xrange(base_len):
-        transversals[i] = dict(_orbit_transversal(degree, strong_gens_distr[i],
-                                 base[i], pairs=True))
+    for i in range(base_len):
+        transversals[i], slps[i] = _orbit_transversal(degree, strong_gens_distr[i],
+                                 base[i], pairs=True, slp=True)
+        transversals[i] = dict(transversals[i])
         if transversals_only is False:
             basic_orbits[i] = list(transversals[i].keys())
     if transversals_only:
         return transversals
     else:
-        return basic_orbits, transversals
+        if not slp:
+            return basic_orbits, transversals
+        return basic_orbits, transversals, slps
 
 
 def _remove_gens(base, strong_gens, basic_orbits=None, strong_gens_distr=None):
@@ -313,11 +317,10 @@ def _remove_gens(base, strong_gens, basic_orbits=None, strong_gens_distr=None):
     Parameters
     ==========
 
-    ``base`` - a base
-    ``strong_gens`` - a strong generating set relative to ``base``
-    ``basic_orbits`` - basic orbits
-    ``strong_gens_distr`` - strong generators distributed by membership in basic
-    stabilizers
+    base : a base
+    strong_gens : a strong generating set relative to *base*
+    basic_orbits : basic orbits
+    strong_gens_distr : strong generators distributed by membership in basic stabilizers
 
     Returns
     =======
@@ -328,14 +331,11 @@ def _remove_gens(base, strong_gens, basic_orbits=None, strong_gens_distr=None):
     Examples
     ========
 
-    >>> from sympy.combinatorics.named_groups import SymmetricGroup
-    >>> from sympy.combinatorics.perm_groups import PermutationGroup
+    >>> from sympy.combinatorics import SymmetricGroup
     >>> from sympy.combinatorics.util import _remove_gens
     >>> from sympy.combinatorics.testutil import _verify_bsgs
     >>> S = SymmetricGroup(15)
     >>> base, strong_gens = S.schreier_sims_incremental()
-    >>> len(strong_gens)
-    26
     >>> new_gens = _remove_gens(base, strong_gens)
     >>> len(new_gens)
     14
@@ -350,16 +350,15 @@ def _remove_gens(base, strong_gens, basic_orbits=None, strong_gens_distr=None):
     References
     ==========
 
-    [1] Holt, D., Eick, B., O'Brien, E.
-    "Handbook of computational group theory"
+    .. [1] Holt, D., Eick, B., O'Brien, E.
+           "Handbook of computational group theory"
 
     """
-    from sympy.combinatorics.perm_groups import PermutationGroup, _orbit
+    from sympy.combinatorics.perm_groups import _orbit
     base_len = len(base)
     degree = strong_gens[0].size
     if strong_gens_distr is None:
         strong_gens_distr = _distribute_gens_by_base(base, strong_gens)
-    temp = strong_gens_distr[:]
     if basic_orbits is None:
         basic_orbits = []
         for i in range(base_len):
@@ -381,10 +380,14 @@ def _remove_gens(base, strong_gens, basic_orbits=None, strong_gens_distr=None):
                     res.remove(gen)
     return res
 
+
 def _strip(g, base, orbits, transversals):
     """
     Attempt to decompose a permutation using a (possibly partial) BSGS
     structure.
+
+    Explanation
+    ===========
 
     This is done by treating the sequence ``base`` as an actual base, and
     the orbits ``orbits`` and transversals ``transversals`` as basic orbits and
@@ -392,7 +395,7 @@ def _strip(g, base, orbits, transversals):
 
     This process is called "sifting". A sift is unsuccessful when a certain
     orbit element is not found or when after the sift the decomposition
-    doesn't end with the identity element.
+    does not end with the identity element.
 
     The argument ``transversals`` is a list of dictionaries that provides
     transversal elements for the orbits ``orbits``.
@@ -400,29 +403,27 @@ def _strip(g, base, orbits, transversals):
     Parameters
     ==========
 
-    ``g`` - permutation to be decomposed
-    ``base`` - sequence of points
-    ``orbits`` - a list in which the ``i``-th entry is an orbit of ``base[i]``
-    under some subgroup of the pointwise stabilizer of `
-    `base[0], base[1], ..., base[i - 1]``. The groups themselves are implicit
-    in this function since the only infromation we need is encoded in the orbits
-    and transversals
-    ``transversals`` - a list of orbit transversals associated with the orbits
-    ``orbits``.
+    g : permutation to be decomposed
+    base : sequence of points
+    orbits : list
+        A list in which the ``i``-th entry is an orbit of ``base[i]``
+        under some subgroup of the pointwise stabilizer of `
+        `base[0], base[1], ..., base[i - 1]``. The groups themselves are implicit
+        in this function since the only information we need is encoded in the orbits
+        and transversals
+    transversals : list
+        A list of orbit transversals associated with the orbits *orbits*.
 
     Examples
     ========
 
-    >>> from sympy.combinatorics import Permutation
-    >>> Permutation.print_cyclic = True
-    >>> from sympy.combinatorics.named_groups import SymmetricGroup
-    >>> from sympy.combinatorics.permutations import Permutation
+    >>> from sympy.combinatorics import Permutation, SymmetricGroup
     >>> from sympy.combinatorics.util import _strip
     >>> S = SymmetricGroup(5)
     >>> S.schreier_sims()
     >>> g = Permutation([0, 2, 3, 1, 4])
     >>> _strip(g, S.base, S.basic_orbits, S.basic_transversals)
-    (Permutation(4), 5)
+    ((4), 5)
 
     Notes
     =====
@@ -435,14 +436,12 @@ def _strip(g, base, orbits, transversals):
     References
     ==========
 
-    [1] Holt, D., Eick, B., O'Brien, E.
-    "Handbook of computational group theory"
+    .. [1] Holt, D., Eick, B., O'Brien, E."Handbook of computational group theory"
 
     See Also
     ========
 
     sympy.combinatorics.perm_groups.PermutationGroup.schreier_sims
-
     sympy.combinatorics.perm_groups.PermutationGroup.schreier_sims_random
 
     """
@@ -458,12 +457,14 @@ def _strip(g, base, orbits, transversals):
         h = _af_rmul(_af_invert(u), h)
     return _af_new(h), base_len + 1
 
-def _strip_af(h, base, orbits, transversals, j):
+
+def _strip_af(h, base, orbits, transversals, j, slp=[], slps={}):
     """
     optimized _strip, with h, transversals and result in array form
     if the stripped elements is the identity, it returns False, base_len + 1
 
     j    h[base[i]] == base[i] for i <= j
+
     """
     base_len = len(base)
     for i in range(j+1, base_len):
@@ -471,12 +472,24 @@ def _strip_af(h, base, orbits, transversals, j):
         if beta == base[i]:
             continue
         if beta not in orbits[i]:
-            return h, i + 1
+            if not slp:
+                return h, i + 1
+            return h, i + 1, slp
         u = transversals[i][beta]
         if h == u:
-            return False, base_len + 1
+            if not slp:
+                return False, base_len + 1
+            return False, base_len + 1, slp
         h = _af_rmul(_af_invert(u), h)
-    return h, base_len + 1
+        if slp:
+            u_slp = slps[i][beta][:]
+            u_slp.reverse()
+            u_slp = [(i, (g,)) for g in u_slp]
+            slp = u_slp + slp
+    if not slp:
+        return h, base_len + 1
+    return h, base_len + 1, slp
+
 
 def _strong_gens_from_distr(strong_gens_distr):
     """
@@ -488,24 +501,21 @@ def _strong_gens_from_distr(strong_gens_distr):
     Parameters
     ==========
 
-    ``strong_gens_distr`` - strong generators distributed by membership in basic
-    stabilizers
+    strong_gens_distr : strong generators distributed by membership in basic stabilizers
 
     Examples
     ========
 
-    >>> from sympy.combinatorics import Permutation
-    >>> Permutation.print_cyclic = True
-    >>> from sympy.combinatorics.named_groups import SymmetricGroup
+    >>> from sympy.combinatorics import SymmetricGroup
     >>> from sympy.combinatorics.util import (_strong_gens_from_distr,
     ... _distribute_gens_by_base)
     >>> S = SymmetricGroup(3)
     >>> S.schreier_sims()
     >>> S.strong_gens
-    [Permutation(0, 1, 2), Permutation(2)(0, 1), Permutation(1, 2)]
+    [(0 1 2), (2)(0 1), (1 2)]
     >>> strong_gens_distr = _distribute_gens_by_base(S.base, S.strong_gens)
     >>> _strong_gens_from_distr(strong_gens_distr)
-    [Permutation(0, 1, 2), Permutation(2)(0, 1), Permutation(1, 2)]
+    [(0 1 2), (2)(0 1), (1 2)]
 
     See Also
     ========

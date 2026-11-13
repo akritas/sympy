@@ -1,14 +1,18 @@
+from __future__ import annotations
 from sympy.unify.rewrite import rewriterule
-from sympy import sin, cos, Basic, Symbol, S
-from sympy.abc import x, y, z
+from sympy.core.basic import Basic
+from sympy.core.singleton import S
+from sympy.core.symbol import Symbol
+from sympy.functions.elementary.trigonometric import sin
+from sympy.abc import x, y
 from sympy.strategies.rl import rebuild
 from sympy.assumptions import Q
 
 p, q = Symbol('p'), Symbol('q')
 
 def test_simple():
-    rl = rewriterule(Basic(p, 1), Basic(p, 2), variables=(p,))
-    assert list(rl(Basic(3, 1))) == [Basic(3, 2)]
+    rl = rewriterule(Basic(p, S(1)), Basic(p, S(2)), variables=(p,))
+    assert list(rl(Basic(S(3), S(1)))) == [Basic(S(3), S(2))]
 
     p1 = p**2
     p2 = p**3
@@ -18,8 +22,8 @@ def test_simple():
     assert list(rl(expr)) == [x**3]
 
 def test_simple_variables():
-    rl = rewriterule(Basic(x, 1), Basic(x, 2), variables=(x,))
-    assert list(rl(Basic(3, 1))) == [Basic(3, 2)]
+    rl = rewriterule(Basic(x, S(1)), Basic(x, S(2)), variables=(x,))
+    assert list(rl(Basic(S(3), S(1)))) == [Basic(S(3), S(2))]
 
     rl = rewriterule(x**2, x**3, variables=(x,))
     assert list(rl(y**2)) == [y**3]
@@ -61,7 +65,7 @@ def test_condition_multiple():
 
     c = Symbol('c', integer=True)
     d = Symbol('d', integer=True)
-    assert set(rl(c + d)) == set([c**d, d**c])
+    assert set(rl(c + d)) == {c**d, d**c}
 
 def test_assumptions():
     rl = rewriterule(x + y, x**y, [x, y], assume=Q.integer(x))

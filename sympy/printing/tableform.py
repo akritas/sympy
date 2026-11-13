@@ -1,15 +1,18 @@
-from __future__ import print_function, division
-
+from __future__ import annotations
 from sympy.core.containers import Tuple
+from sympy.core.singleton import S
+from sympy.core.symbol import Symbol
+from sympy.core.sympify import SympifyError
 
 from types import FunctionType
 
 
-class TableForm(object):
-    """
+class TableForm:
+    r"""
     Create a nice table representation of data.
 
-    Example::
+    Examples
+    ========
 
     >>> from sympy import TableForm
     >>> t = TableForm([[5, 7], [4, 2], [10, 3]])
@@ -22,10 +25,10 @@ class TableForm(object):
     format (ascii, latex, html, ...).
 
     >>> print(t.as_latex())
-    \\begin{tabular}{l l}
-    $5$ & $7$ \\\\
-    $4$ & $2$ \\\\
-    $10$ & $3$ \\\\
+    \begin{tabular}{l l}
+    $5$ & $7$ \\
+    $4$ & $2$ \\
+    $10$ & $3$ \\
     \end{tabular}
 
     """
@@ -50,7 +53,7 @@ class TableForm(object):
                                 - "automatic" ... labels are 1, 2, 3, ...
 
                             Can be a list of labels for rows and columns:
-                            The lables for each dimension can be given
+                            The labels for each dimension can be given
                             as None, "automatic", or [l1, l2, ...] e.g.
                             ["automatic", None] will number the rows
 
@@ -77,7 +80,7 @@ class TableForm(object):
                             returns None then the _print method will be used.)
 
             wipe_zeros ...
-                            Don't show zeros in the table.
+                            Do not show zeros in the table.
 
                             [default: True]
 
@@ -95,7 +98,7 @@ class TableForm(object):
         Examples
         ========
 
-        >>> from sympy import TableForm, Matrix
+        >>> from sympy import TableForm, Symbol
         >>> TableForm([[5, 7], [4, 2], [10, 3]])
         5  7
         4  2
@@ -106,20 +109,18 @@ class TableForm(object):
         1 | .
         2 | . .
         3 | . . .
-        >>> TableForm([['.'*(j if not i%2 else 1) for i in range(3)]
+        >>> TableForm([[Symbol('.'*(j if not i%2 else 1)) for i in range(3)]
         ...            for j in range(4)], alignments='rcl')
             .
           . . .
          .. . ..
         ... . ...
         """
-        from sympy import Symbol, S, Matrix
-        from sympy.core.sympify import SympifyError
+        from sympy.matrices.dense import Matrix
 
         # We only support 2D data. Check the consistency:
         if isinstance(data, Matrix):
             data = data.tolist()
-        _w = len(data[0])
         _h = len(data)
 
         # fill out any short lines
@@ -144,7 +145,7 @@ class TableForm(object):
                         lj = Symbol(str(lj))
                 line[j] = lj
             data[i] = line
-        _lines = Tuple(*data)
+        _lines = Tuple(*[Tuple(*d) for d in data])
 
         headings = kwarg.get("headings", [None, None])
         if headings == "automatic":
@@ -213,6 +214,7 @@ class TableForm(object):
 
         Examples
         ========
+
         >>> from sympy import TableForm
         >>> t = TableForm([[5, 7], [4, 2], [10, 3]], headings='automatic')
         >>> t
@@ -227,7 +229,7 @@ class TableForm(object):
         [ 4, 2],
         [10, 3]])
         """
-        from sympy import Matrix
+        from sympy.matrices.dense import Matrix
         return Matrix(self._lines)
 
     def as_str(self):
@@ -242,7 +244,8 @@ class TableForm(object):
         """
         Returns the string representation of 'self'.
 
-        Example:
+        Examples
+        ========
 
         >>> from sympy import TableForm
         >>> t = TableForm([[5, 7], [4, 2], [10, 3]])
@@ -267,7 +270,7 @@ class TableForm(object):
         # Check heading:
         if self._headings[0]:
             self._headings[0] = [str(x) for x in self._headings[0]]
-            _head_width = max([len(x) for x in self._headings[0]])
+            _head_width = max(len(x) for x in self._headings[0])
 
         if self._headings[1]:
             new_line = []

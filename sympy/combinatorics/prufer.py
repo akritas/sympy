@@ -1,8 +1,10 @@
-from __future__ import print_function, division
-
+from __future__ import annotations
 from sympy.core import Basic
-from sympy.core.compatibility import iterable, as_int, xrange
-from sympy.utilities.iterables import flatten
+from sympy.core.containers import Tuple
+from sympy.tensor.array import Array
+from sympy.core.sympify import _sympify
+from sympy.utilities.iterables import flatten, iterable
+from sympy.utilities.misc import as_int
 
 from collections import defaultdict
 
@@ -20,7 +22,7 @@ class Prufer(Basic):
     References
     ==========
 
-    .. [1] http://mathworld.wolfram.com/LabeledTree.html
+    .. [1] https://mathworld.wolfram.com/LabeledTree.html
 
     """
     _prufer_repr = None
@@ -33,8 +35,8 @@ class Prufer(Basic):
         """Returns Prufer sequence for the Prufer object.
 
         This sequence is found by removing the highest numbered vertex,
-        recording the node it was attached to, and continuuing until only
-        two verices remain. The Prufer sequence is the list of recorded nodes.
+        recording the node it was attached to, and continuing until only
+        two vertices remain. The Prufer sequence is the list of recorded nodes.
 
         Examples
         ========
@@ -53,7 +55,7 @@ class Prufer(Basic):
         """
         if self._prufer_repr is None:
             self._prufer_repr = self.to_prufer(self._tree_repr[:], self.nodes)
-        return self._prufer_repr
+        return self._prufer_repr[:]
 
     @property
     def tree_repr(self):
@@ -76,7 +78,7 @@ class Prufer(Basic):
         """
         if self._tree_repr is None:
             self._tree_repr = self.to_tree(self._prufer_repr[:])
-        return self._tree_repr
+        return [edge[:] for edge in self._tree_repr]
 
     @property
     def nodes(self):
@@ -167,9 +169,9 @@ class Prufer(Basic):
             # edge involving it.
             d[edge[0]] += 1
             d[edge[1]] += 1
-        for i in xrange(n - 2):
+        for i in range(n - 2):
             # find the smallest leaf
-            for x in xrange(n):
+            for x in range(n):
                 if d[x] == 1:
                     break
             # find the node it was connected to
@@ -207,7 +209,7 @@ class Prufer(Basic):
         References
         ==========
 
-        - http://hamberg.no/erlend/2010/11/06/prufer-sequence/
+        .. [1] https://hamberg.no/erlend/posts/2010-11-06-prufer-sequence-compact-tree-representation.html
 
         See Also
         ========
@@ -221,7 +223,7 @@ class Prufer(Basic):
         for p in prufer:
             d[p] += 1
         for i in prufer:
-            for j in xrange(n):
+            for j in range(n):
             # find the smallest leaf (degree = 1)
                 if d[j] == 1:
                     break
@@ -230,7 +232,7 @@ class Prufer(Basic):
             d[i] -= 1
             d[j] -= 1
             tree.append(sorted([i, j]))
-        last = [i for i in xrange(n) if d[i] == 1] or [0, 1]
+        last = [i for i in range(n) if d[i] == 1] or [0, 1]
         tree.append(last)
 
         return tree
@@ -271,8 +273,7 @@ class Prufer(Basic):
         got = set()
         nmin = nmax = None
         for ei in e:
-            for i in ei:
-                got.add(i)
+            got.update(ei)
             nmin = min(ei[0], nmin) if nmin is not None else ei[0]
             nmax = max(ei[1], nmax) if nmax is not None else ei[1]
             rv.append(list(ei))
@@ -282,7 +283,7 @@ class Prufer(Basic):
             if len(missing) == 1:
                 msg = 'Node %s is missing.' % missing.pop()
             else:
-                msg = 'Nodes %s are missing.' % list(sorted(missing))
+                msg = 'Nodes %s are missing.' % sorted(missing)
             raise ValueError(msg)
         if nmin != 0:
             for i, ei in enumerate(rv):
@@ -309,7 +310,7 @@ class Prufer(Basic):
         """
         r = 0
         p = 1
-        for i in xrange(self.nodes - 3, -1, -1):
+        for i in range(self.nodes - 3, -1, -1):
             r += p*self.prufer_repr[i]
             p *= self.nodes
         return r
@@ -328,10 +329,10 @@ class Prufer(Basic):
         """
         n, rank = as_int(n), as_int(rank)
         L = defaultdict(int)
-        for i in xrange(n - 3, -1, -1):
+        for i in range(n - 3, -1, -1):
             L[i] = rank % n
             rank = (rank - L[i])//n
-        return Prufer([L[i] for i in xrange(len(L))])
+        return Prufer([L[i] for i in range(len(L))])
 
     def __new__(cls, *args, **kw_args):
         """The constructor for the Prufer object.
@@ -361,6 +362,8 @@ class Prufer(Basic):
         [[0, 1], [1, 3], [2, 3]]
 
         """
+        arg0 = Array(args[0]) if args[0] else Tuple()
+        args = (arg0,) + tuple(_sympify(arg) for arg in args[1:])
         ret_obj = Basic.__new__(cls, *args, **kw_args)
         args = [list(args[0])]
         if args[0] and iterable(args[0][0]):
@@ -377,7 +380,7 @@ class Prufer(Basic):
                     if len(missing) == 1:
                         msg = 'Node %s is missing.' % missing.pop()
                     else:
-                        msg = 'Nodes %s are missing.' % list(sorted(missing))
+                        msg = 'Nodes %s are missing.' % sorted(missing)
                     raise ValueError(msg)
             ret_obj._tree_repr = [list(i) for i in args[0]]
             ret_obj._nodes = nnodes

@@ -1,15 +1,21 @@
-from sympy import (S, Symbol, sqrt, I, Integer, Rational, cos, sin, im, re, Abs,
-        exp, sinh, cosh, tan, tanh, conjugate, sign, cot, coth, pi, symbols,
-        expand_complex)
-from sympy.utilities.pytest import XFAIL
-
+from __future__ import annotations
+from sympy.core.function import expand_complex
+from sympy.core.numbers import (I, Integer, Rational, pi)
+from sympy.core.power import Pow
+from sympy.core.singleton import S
+from sympy.core.symbol import (Symbol, symbols)
+from sympy.functions.elementary.complexes import (Abs, conjugate, im, re, sign)
+from sympy.functions.elementary.exponential import exp
+from sympy.functions.elementary.hyperbolic import (cosh, coth, sinh, tanh)
+from sympy.functions.elementary.miscellaneous import sqrt
+from sympy.functions.elementary.trigonometric import (cos, cot, sin, tan)
 
 def test_complex():
     a = Symbol("a", real=True)
     b = Symbol("b", real=True)
     e = (a + I*b)*(a - I*b)
     assert e.expand() == a**2 + b**2
-    assert sqrt(I) == (-1)**Rational(1, 4)
+    assert sqrt(I) == Pow(I, S.Half)
 
 
 def test_conjugate():
@@ -39,7 +45,7 @@ def test_conjugate():
 def test_abs1():
     a = Symbol("a", real=True)
     b = Symbol("b", real=True)
-    assert abs(a) == abs(a)
+    assert abs(a) == Abs(a)
     assert abs(-a) == abs(a)
     assert abs(a + I*b) == sqrt(a**2 + b**2)
 
@@ -76,8 +82,8 @@ def test_evalc():
 
     assert tan(I*x).expand(complex=True) == tanh(x) * I
     assert tan(x + I*y).expand(complex=True) == (
-        (sin(x)*cos(x) + I*cosh(y)*sinh(y)) /
-        (cos(x)**2 + sinh(y)**2)).expand()
+        sin(2*x)/(cos(2*x) + cosh(2*y)) +
+        I*sinh(2*y)/(cos(2*x) + cosh(2*y)))
 
     assert sinh(I*x).expand(complex=True) == I * sin(x)
     assert sinh(x + I*y).expand(complex=True) == sinh(x)*cos(y) + \
@@ -95,7 +101,7 @@ def test_evalc():
 
 def test_pythoncomplex():
     x = Symbol("x")
-    assert 4j*x == 4*x*I
+    assert 4j*x != 4*x*I
     assert 4j*x == 4.0*x*I
     assert 4.1j*x != 4*x*I
 
@@ -153,13 +159,13 @@ def test_re_im1652():
     assert im(x)*re(conjugate(x)) + im(conjugate(x)) * re(x) == 0
 
 
-def test_issue_1985():
+def test_issue_5084():
     x = Symbol('x')
     assert ((x + x*I)/(1 + I)).as_real_imag() == (re((x + I*x)/(1 + I)
             ), im((x + I*x)/(1 + I)))
 
 
-def test_issue_2137():
+def test_issue_5236():
     assert (cos(1 + I)**3).as_real_imag() == (-3*sin(1)**2*sinh(1)**2*cos(1)*cosh(1) +
         cos(1)**3*cosh(1)**3, -3*cos(1)**2*cosh(1)**2*sin(1)*sinh(1) + sin(1)**3*sinh(1)**3)
 
@@ -170,7 +176,7 @@ def test_real_imag():
     a = Symbol('a', real=True)
     assert (2*a*x).as_real_imag() == (2*a*re(x), 2*a*im(x))
 
-    # issue 2296:
+    # issue 5395:
     assert (x*x.conjugate()).as_real_imag() == (Abs(x)**2, 0)
     assert im(x*x.conjugate()) == 0
     assert im(x*y.conjugate()*z*y) == im(x*z)*Abs(y)**2
@@ -180,17 +186,24 @@ def test_real_imag():
     assert (sin(x)*sin(x).conjugate()).as_real_imag() == \
         (Abs(sin(x))**2, 0)
 
-    # issue 3474:
+    # issue 6573:
     assert (x**2).as_real_imag() == (re(x)**2 - im(x)**2, 2*re(x)*im(x))
 
-    # issue 3329:
+    # issue 6428:
     r = Symbol('r', real=True)
     i = Symbol('i', imaginary=True)
     assert (i*r*x).as_real_imag() == (I*i*r*im(x), -I*i*r*re(x))
+    assert (i*r*x*(y + 2)).as_real_imag() == (
+        I*i*r*(re(y) + 2)*im(x) + I*i*r*re(x)*im(y),
+        -I*i*r*(re(y) + 2)*re(x) + I*i*r*im(x)*im(y))
+
+    # issue 7106:
+    assert ((1 + I)/(1 - I)).as_real_imag() == (0, 1)
+    assert ((1 + 2*I)*(1 + 3*I)).as_real_imag() == (-5, 5)
 
 
 def test_pow_issue_1724():
-    e = ((-1)**(S(1)/3))
+    e = ((S.NegativeOne)**(S.One/3))
     assert e.conjugate().n() == e.n().conjugate()
     e = S('-2/3 - (-29/54 + sqrt(93)/18)**(1/3) - 1/(9*(-29/54 + sqrt(93)/18)**(1/3))')
     assert e.conjugate().n() == e.n().conjugate()
@@ -198,5 +211,17 @@ def test_pow_issue_1724():
     assert e.conjugate().n() == e.n().conjugate()
 
 
-def test_issue_2330():
+def test_issue_5429():
     assert sqrt(I).conjugate() != sqrt(I)
+
+def test_issue_4124():
+    from sympy.core.numbers import oo
+    assert expand_complex(I*oo) == oo*I
+
+def test_issue_11518():
+    x = Symbol("x", real=True)
+    y = Symbol("y", real=True)
+    r = sqrt(x**2 + y**2)
+    assert conjugate(r) == r
+    s = abs(x + I * y)
+    assert conjugate(s) == r

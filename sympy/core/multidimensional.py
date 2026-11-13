@@ -3,9 +3,9 @@ Provides functionality for multidimensional usage of scalar-functions.
 
 Read the vectorize docstring for more details.
 """
-from __future__ import print_function, division
+from __future__ import annotations
 
-from sympy.core.decorators import wraps
+from functools import wraps
 
 
 def apply_on_element(f, args, kwargs, n):
@@ -22,7 +22,7 @@ def apply_on_element(f, args, kwargs, n):
         structure = kwargs[n]
         is_arg = False
 
-    # Define reduced function that is only dependend of the specified argument.
+    # Define reduced function that is only dependent on the specified argument.
     def f_reduced(x):
         if hasattr(x, "__iter__"):
             return list(map(f_reduced, x))
@@ -42,13 +42,7 @@ def iter_copy(structure):
     """
     Returns a copy of an iterable object (also copying all embedded iterables).
     """
-    l = []
-    for i in structure:
-        if hasattr(i, "__iter__"):
-            l.append(iter_copy(i))
-        else:
-            l.append(i)
-    return l
+    return [iter_copy(i) if hasattr(i, "__iter__") else i for i in structure]
 
 
 def structure_copy(structure):
@@ -64,10 +58,10 @@ class vectorize:
     """
     Generalizes a function taking scalars to accept multidimensional arguments.
 
-    For example
+    Examples
+    ========
 
-    >>> from sympy import diff, sin, symbols, Function
-    >>> from sympy.core.multidimensional import vectorize
+    >>> from sympy import vectorize, diff, sin, symbols, Function
     >>> x, y, z = symbols('x y z')
     >>> f, g, h = list(map(Function, 'fgh'))
 
@@ -93,8 +87,17 @@ class vectorize:
         If no argument is given, everything is treated multidimensional.
         """
         for a in mdargs:
-            assert isinstance(a, (int, str))
+            if not isinstance(a, (int, str)):
+                raise TypeError("a is of invalid type")
         self.mdargs = mdargs
+
+    def __eq__(self, other):
+        if not isinstance(other, vectorize):
+            return NotImplemented
+        return self.mdargs == other.mdargs
+
+    def __hash__(self):
+        return hash((type(self), self.mdargs))
 
     def __call__(self, f):
         """

@@ -1,7 +1,15 @@
 # conceal the implicit import from the code quality tester
-from __future__ import print_function, division
-
-exec("from sympy import *")
+from __future__ import annotations
+from sympy.core.numbers import (oo, pi)
+from sympy.core.symbol import (Symbol, symbols)
+from sympy.functions.elementary.exponential import exp
+from sympy.functions.elementary.miscellaneous import sqrt
+from sympy.functions.special.bessel import besseli
+from sympy.functions.special.gamma_functions import gamma
+from sympy.integrals.integrals import integrate
+from sympy.integrals.transforms import (mellin_transform,
+    inverse_fourier_transform, inverse_mellin_transform,
+    laplace_transform, inverse_laplace_transform, fourier_transform)
 
 LT = laplace_transform
 FT = fourier_transform
@@ -10,17 +18,17 @@ IFT = inverse_fourier_transform
 ILT = inverse_laplace_transform
 IMT = inverse_mellin_transform
 
-from sympy.abc import x, s, a, b, c, d, t, y, z
+from sympy.abc import x, y
 nu, beta, rho = symbols('nu beta rho')
 
 apos, bpos, cpos, dpos, posk, p = symbols('a b c d k p', positive=True)
 k = Symbol('k', real=True)
 negk = Symbol('k', negative=True)
 
-mu1, mu2 = symbols('mu1 mu2', real=True, finite=True, bounded=True)
-sigma1, sigma2 = symbols('sigma1 sigma2', real=True, finite=True,
-                         bounded=True, positive=True)
-rate = Symbol('lambda', real=True, positive=True, bounded=True)
+mu1, mu2 = symbols('mu1 mu2', real=True, nonzero=True, finite=True)
+sigma1, sigma2 = symbols('sigma1 sigma2', real=True, nonzero=True,
+                         finite=True, positive=True)
+rate = Symbol('lambda', positive=True)
 
 
 def normal(x, mu, sigma):
@@ -48,13 +56,11 @@ laplace = exp(-abs(x - mu)/bpos)/2/bpos
 u = Symbol('u', polar=True)
 tpos = Symbol('t', positive=True)
 
-from sympy import Chi as cosint
-
 
 def E(expr):
-    res1 = integrate(expr*exponential(x, rate)*normal(y, mu1, sigma1),
+    integrate(expr*exponential(x, rate)*normal(y, mu1, sigma1),
                      (x, 0, oo), (y, -oo, oo), meijerg=True)
-    res2 = integrate(expr*exponential(x, rate)*normal(y, mu1, sigma1),
+    integrate(expr*exponential(x, rate)*normal(y, mu1, sigma1),
                      (y, -oo, oo), (x, 0, oo), meijerg=True)
 
 bench = [
@@ -191,7 +197,7 @@ bench = [
     'integrate(besselj(a,x)*besselj(b,x)/x, (x,0,oo), meijerg=True)',
 
     'hyperexpand(meijerg((-s - a/2 + 1, -s + a/2 + 1), (-a/2 - S(1)/2, -s + a/2 + S(3)/2), (a/2, -a/2), (-a/2 - S(1)/2, -s + a/2 + S(3)/2), 1))',
-    "combsimp(S('2**(2*s)*(-pi*gamma(-a + 1)*gamma(a + 1)*gamma(-a - s + 1)*gamma(-a + s - 1/2)*gamma(a - s + 3/2)*gamma(a + s + 1)/(a*(a + s)) - gamma(-a - 1/2)*gamma(-a + 1)*gamma(a + 1)*gamma(a + 3/2)*gamma(-s + 3/2)*gamma(s - 1/2)*gamma(-a + s + 1)*gamma(a - s + 1)/(a*(-a + s)))*gamma(-2*s + 1)*gamma(s + 1)/(pi*s*gamma(-a - 1/2)*gamma(a + 3/2)*gamma(-s + 1)*gamma(-s + 3/2)*gamma(s - 1/2)*gamma(-a - s + 1)*gamma(-a + s - 1/2)*gamma(a - s + 1)*gamma(a - s + 3/2))'))",
+    "gammasimp(S('2**(2*s)*(-pi*gamma(-a + 1)*gamma(a + 1)*gamma(-a - s + 1)*gamma(-a + s - 1/2)*gamma(a - s + 3/2)*gamma(a + s + 1)/(a*(a + s)) - gamma(-a - 1/2)*gamma(-a + 1)*gamma(a + 1)*gamma(a + 3/2)*gamma(-s + 3/2)*gamma(s - 1/2)*gamma(-a + s + 1)*gamma(a - s + 1)/(a*(-a + s)))*gamma(-2*s + 1)*gamma(s + 1)/(pi*s*gamma(-a - 1/2)*gamma(a + 3/2)*gamma(-s + 1)*gamma(-s + 3/2)*gamma(s - 1/2)*gamma(-a - s + 1)*gamma(-a + s - 1/2)*gamma(a - s + 1)*gamma(a - s + 3/2))'))",
 
     'mellin_transform(E1(x), x, s)',
     'inverse_mellin_transform(gamma(s)/s, s, x, (0, oo))',
@@ -226,7 +232,7 @@ bench = [
     'integrate(Si(x), x, meijerg=True)',
     'integrate(Ci(u), u, meijerg=True)',
     'integrate(Shi(x), x, meijerg=True)',
-    'integrate(cosint(u), u, meijerg=True)',
+    'integrate(Chi(u), u, meijerg=True)',
     'integrate(Si(x)*exp(-x), (x, 0, oo), meijerg=True)',
     'integrate(expint(1, x)*sin(x), (x, 0, oo), meijerg=True)'
 ]
@@ -237,20 +243,20 @@ import sys
 
 timings = []
 
-for n, string in enumerate(bench):
-    #print string
-    clear_cache()
-    _t = time()
-    exec(string)
-    _t = time() - _t
-    timings += [(_t, string)]
-    sys.stdout.write('.')
-    sys.stdout.flush()
-    if n % (len(bench) // 10) == 0:
-        sys.stdout.write('%s' % (10*n // len(bench)))
-print()
+if __name__ == '__main__':
+    for n, string in enumerate(bench):
+        clear_cache()
+        _t = time()
+        exec(string)
+        _t = time() - _t
+        timings += [(_t, string)]
+        sys.stdout.write('.')
+        sys.stdout.flush()
+        if n % (len(bench) // 10) == 0:
+            sys.stdout.write('%s' % (10*n // len(bench)))
+    print()
 
-timings.sort(key=lambda x: -x[0])
+    timings.sort(key=lambda x: -x[0])
 
-for t, string in timings:
-    print('%.2fs %s' % (t, string))
+    for ti, string in timings:
+        print('%.2fs %s' % (ti, string))

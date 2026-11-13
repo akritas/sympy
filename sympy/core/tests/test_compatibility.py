@@ -1,15 +1,14 @@
-from sympy.core.compatibility import default_sort_key, as_int
-from sympy.core.singleton import S
-from sympy.utilities.pytest import raises
+from __future__ import annotations
 
-from sympy.abc import x
+import pytest
 
-
-def test_default_sort_key():
-    func = lambda x: x
-    assert sorted([func, x, func], key=default_sort_key) == [func, func, x]
+from sympy.testing.pytest import warns_deprecated_sympy
 
 
-def test_as_int():
-    raises(ValueError, lambda : as_int(1.1))
-    raises(ValueError, lambda : as_int([]))
+@pytest.mark.thread_unsafe(
+    reason="expects a warning side effect from a one-time module import"
+)
+def test_compatibility_submodule():
+    # Test the sympy.core.compatibility deprecation warning
+    with warns_deprecated_sympy():
+        import sympy.core.compatibility # noqa:F401

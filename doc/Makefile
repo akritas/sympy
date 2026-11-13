@@ -6,23 +6,26 @@ RST2HTML     = rst2html
 # You can set these variables from the command line.
 SPHINXOPTS   =
 SPHINXVER    = 0.5
-SPHINXBUILD  = PYTHONPATH=..:$(PYTHONPATH) sphinx-build
-PAPER        =
+SPHINXBUILD  = sphinx-build
+# This one can also be set in the environment
+PAPER        ?= letter
+BUILDDIR     = _build
+SOURCEDIR    = src
+LIVEHOST     = localhost
+LIVEPORT     = 0
 
-SVGFILES = $(wildcard src/modules/physics/mechanics/*.svg)
+SVGFILES = $(wildcard src/modules/physics/vector/*.svg) $(wildcard src/modules/physics/mechanics/examples/*.svg) $(wildcard src/modules/vector/*.svg)
 PDFFILES = $(SVGFILES:%.svg=%.pdf)
 
-ALLSPHINXOPTS = -d _build/doctrees $(SPHINXOPTS) src
-ALLSPHINXOPTSapi = -d _build/doctrees-api $(SPHINXOPTS) api
-ALLSPHINXOPTSlatex = -d _build/doctrees-latex -D latex_paper_size=$(PAPER) \
+ALLSPHINXOPTS = -d $(BUILDDIR)/doctrees $(SPHINXOPTS)
+WARNINGSFILE = $(BUILDDIR)/.sphinx-warnings
+SPHINXSAVEWARNINGS = -w $(WARNINGSFILE)
+ALLSPHINXOPTSapi = -d $(BUILDDIR)/doctrees-api $(SPHINXOPTS) api
+ALLSPHINXOPTSlatex = -d $(BUILDDIR)/doctrees-latex -D latex_elements.papersize=$(PAPER)paper \
                 $(SPHINXOPTS) src
 
-MOFILES = $(foreach l,$(LANGUAGES),$(addprefix _build/i18n/,$(addsuffix /LC_MESSAGES/tutorial.mo,${l})))
-POFILES = $(foreach l,$(LANGUAGES),$(addprefix src/tutorial/tutorial.,$(addsuffix .po,${l})))
-
-.PHONY: changes cheatsheet clean gettext help html html-errors \
-        htmlapi htmlhelp htmli18n info latex linkcheck texinfo \
-        update-po web
+.PHONY: changes cheatsheet clean help html _html htmlapi htmlhelp info latex \
+        pdflatex latexpdf pdf linkcheck livehtml texinfo web logo man printwarnings
 
 .SUFFIXES: .pdf .svg
 
@@ -31,132 +34,141 @@ help:
 	@echo "  changes     to make an overview over all changed/added/deprecated items"
 	@echo "  cheatsheet  to make the Cheatsheet"
 	@echo "  clean       to remove generated files"
-	@echo "  gettext     to make pot files for translation"
 	@echo "  html        to make standalone HTML files"
-	@echo "  html-errors to make the standalone HTML files, stopping on any errors or warnings"
 	@echo "  htmlapi     to make HTML API docs"
 	@echo "  htmlhelp    to make HTML files and a HTML help project"
-	@echo "  htmli18n    to make the i18n versions"
 	@echo "  info        to make Texinfo files and run them through makeinfo"
 	@echo "  latex       to make LaTeX files, you can set PAPER=a4 or PAPER=letter"
 	@echo "  linkcheck   to check all external links for integrity"
 	@echo "  livehtml    to use livereload to view the built html"
 	@echo "  texinfo     to make Texinfo files"
-	@echo "  update-po   to update po files for translation"
 	@echo "  web         to make files usable by Sphinx.web"
+	@echo "  logo        generate logos from src/logo/sympy.svg"
+	@echo "  man         build manpage"
 
 clean:
-	-rm -rf _build
+	-rm -rf $(BUILDDIR)
 	-rm -rf sphinx
 	-rm -f $(PDFFILES)
 
-html: htmli18n
-	mkdir -p src/.static
-	mkdir -p _build/html
-	mkdir -p _build/doctrees
-	mkdir -p src/modules
-	$(SPHINXBUILD) -b html $(ALLSPHINXOPTS) _build/html
-	cp -r src/pics _build/html/
-	@echo
-	@echo "Build finished. The HTML pages are in _build/html."
+html:
+	$(MAKE) -s _html || $(MAKE) -s printwarnings
 
-html-errors: SPHINXOPTS += -W
-html-errors: html
+# Force colors on CI. Set NO_COLOR=1 on the command line to disable this.
+_html: export FORCE_COLOR = 1
+_html: $(BUILDDIR)/html/pics/*.png
+_html: SPHINXOPTS += -W --keep-going
+_html: $(BUILDDIR)/logo/sympy-notailtext-favicon.ico
+	mkdir -p $(SOURCEDIR)/.static
+	mkdir -p $(BUILDDIR)/html
+	mkdir -p $(BUILDDIR)/doctrees
+	mkdir -p $(SOURCEDIR)/modules
+	$(SPHINXBUILD) -b html $(ALLSPHINXOPTS) $(SPHINXSAVEWARNINGS) $(SOURCEDIR) $(BUILDDIR)/html
+	@echo
+	@echo "Docs build finished. The HTML pages are in $(BUILDDIR)/html."
+
+# Print the warnings again at the end of the build, to make them easier to find
+printwarnings:
+	@printf "\033[0;31mThe docs build failed with the following errors:\033[0m\n"
+	@cat $(WARNINGSFILE)
+	exit 1
+
+$(BUILDDIR)/html/pics/*.png: $(SOURCEDIR)/pics/*.png
+	mkdir -p $(BUILDDIR)/html
+	cp -r $(SOURCEDIR)/pics $(BUILDDIR)/html/
 
 htmlapi:
 	mkdir -p api/.static
 	mkdir -p api/modules
-	mkdir -p _build/api _build/doctreesapi
+	mkdir -p $(BUILDDIR)/api $(BUILDDIR)/doctreesapi
 	rm -f api/modules/sympy*.rst
-	$(SPHINXBUILD) -b html $(ALLSPHINXOPTSapi) _build/api
+	$(SPHINXBUILD) -b html $(ALLSPHINXOPTSapi) $(BUILDDIR)/api
 	@echo
-	@echo "Build finished. The API docs pages are in _build/api."
-
-gettext:
-	$(SPHINXBUILD) -b gettext -t gettext -D master_doc=tutorial/tutorial \
-		-D source_suffix=.en.rst -d _build/doctrees-en src src/tutorial
-	sed -i "/^\# [0-9a-zA-Z]*$$/d" src/tutorial/tutorial.pot
-
-update-po: $(POFILES)
-
-htmli18n: $(MOFILES)
-	mkdir -p _build/i18n/
-	mkdir -p _build/html/tutorial
-	$(foreach l,$(LANGUAGES), \
-		$(SPHINXBUILD) $(SPHINXOPTS) -b html -D language=$l -D master_doc=tutorial/tutorial \
-			-D source_suffix=.en.rst -d _build/doctrees-$l src _build/i18n/$l && \
-		cp _build/i18n/$l/tutorial/tutorial.html _build/html/tutorial/tutorial.$l.html && \
-	) true
-
-$(POFILES): src/tutorial/tutorial.pot
-	msgmerge -U $@ $<
-	touch $@
-
-$(MOFILES): _build/i18n/%/LC_MESSAGES/tutorial.mo: src/tutorial/tutorial.%.po
-	mkdir -p $(dir $@)
-	msgfmt $< -o $@
-	rm -rf _build/doctrees-$*
+	@echo "Build finished. The API docs pages are in $(BUILDDIR)/api."
 
 web:
-	mkdir -p _build/web _build/doctrees
-	$(SPHINXBUILD) -b web $(ALLSPHINXOPTS) _build/web
+	mkdir -p $(BUILDDIR)/web $(BUILDDIR)/doctrees
+	$(SPHINXBUILD) -b web $(ALLSPHINXOPTS) $(SOURCEDIR) $(BUILDDIR)/web
 	@echo
 	@echo "Build finished; now you can run"
-	@echo "  python -m sphinx.web _build/web"
+	@echo "  python -m sphinx.web $(BUILDDIR)/web"
 	@echo "to start the server."
 
 htmlhelp:
-	mkdir -p _build/htmlhelp _build/doctrees
-	$(SPHINXBUILD) -b htmlhelp $(ALLSPHINXOPTS) _build/htmlhelp
+	mkdir -p $(BUILDDIR)/htmlhelp $(BUILDDIR)/doctrees
+	$(SPHINXBUILD) -b htmlhelp $(ALLSPHINXOPTS) %(SOURCEDIR) $(BUILDDIR)/htmlhelp
 	@echo
 	@echo "Build finished; now you can run HTML Help Workshop with the" \
-	      ".hhp project file in _build/htmlhelp."
+	      ".hhp project file in $(BUILDDIR)/htmlhelp."
 
-latex: $(PDFFILES)
-	mkdir -p _build/latex _build/doctrees
-	$(SPHINXBUILD) -b latex $(ALLSPHINXOPTSlatex) _build/latex
-	sed -i "s/pdflatex/xelatex/g" _build/latex/Makefile
+latex: logo
+	mkdir -p $(BUILDDIR)/latex $(BUILDDIR)/doctrees-latex
+	$(SPHINXBUILD) -b latex $(ALLSPHINXOPTSlatex) $(BUILDDIR)/latex
 	@echo
-	@echo "Build finished; the LaTeX files are in _build/latex."
+	@echo "Build finished; the LaTeX files are in $(BUILDDIR)/latex."
 	@echo "Run \`make all' in that directory to run these through xelatex."
 
-.svg.pdf:
-	inkscape --file=$< --export-area-drawing --without-gui --export-pdf=$@
+pdf pdflatex latexpdf: latex
+	@$(MAKE) -C $(BUILDDIR)/latex all-pdf \
+	LATEXOPTS="-halt-on-error -interaction=batchmode" \
+	LATEXMKOPTS="-xelatex" \
+	|| echo "LaTeX error"'!'" Check .log in $(BUILDDIR)/latex for lineno in .tex file."
 
 changes:
-	mkdir -p _build/changes _build/doctrees
-	$(SPHINXBUILD) -b changes $(ALLSPHINXOPTS) _build/changes
+	mkdir -p $(BUILDDIR)/changes $(BUILDDIR)/doctrees
+	$(SPHINXBUILD) -b changes $(ALLSPHINXOPTS) $(SOURCEDIR) $(BUILDDIR)/changes
 	@echo
-	@echo "The overview file is in _build/changes."
+	@echo "The overview file is in $(BUILDDIR)/changes."
 
 linkcheck:
-	mkdir -p _build/linkcheck _build/doctrees
-	$(SPHINXBUILD) -b linkcheck $(ALLSPHINXOPTS) _build/linkcheck
+	mkdir -p $(BUILDDIR)/linkcheck $(BUILDDIR)/doctrees
+	$(SPHINXBUILD) -b linkcheck $(ALLSPHINXOPTS) $(SOURCEDIR) $(BUILDDIR)/linkcheck
 	@echo
 	@echo "Link check complete; look for any errors in the above output " \
-	      "or in _build/linkcheck/output.txt."
+	      "or in $(BUILDDIR)/linkcheck/output.txt."
 
-livehtml:
-	livereload -b _build/html
+livehtml: _html
+	sphinx-autobuild --open-browser --watch .. --host $(LIVEHOST) --port $(LIVEPORT) -b html $(ALLSPHINXOPTS) $(SOURCEDIR) $(BUILDDIR)/html
 
-cheatsheet: _build/cheatsheet/cheatsheet.pdf
+cheatsheet: $(BUILDDIR)/cheatsheet/cheatsheet.pdf $(BUILDDIR)/cheatsheet/combinatoric_cheatsheet.pdf
 
-_build/cheatsheet/cheatsheet.pdf: cheatsheet/cheatsheet.tex
-	mkdir -p _build/cheatsheet
-	pdflatex -output-directory=_build/cheatsheet cheatsheet/cheatsheet.tex
-	pdflatex -output-directory=_build/cheatsheet cheatsheet/cheatsheet.tex
+$(BUILDDIR)/cheatsheet/cheatsheet.pdf: cheatsheet/cheatsheet.tex
+	mkdir -p $(BUILDDIR)/cheatsheet
+	pdflatex -output-directory=$(BUILDDIR)/cheatsheet cheatsheet/cheatsheet.tex
+	pdflatex -output-directory=$(BUILDDIR)/cheatsheet cheatsheet/cheatsheet.tex
+
+$(BUILDDIR)/cheatsheet/combinatoric_cheatsheet.pdf: cheatsheet/combinatoric_cheatsheet.tex
+	mkdir -p $(BUILDDIR)/cheatsheet
+	pdflatex -output-directory=$(BUILDDIR)/cheatsheet cheatsheet/combinatoric_cheatsheet.tex
+	pdflatex -output-directory=$(BUILDDIR)/cheatsheet cheatsheet/combinatoric_cheatsheet.tex
 
 texinfo:
-	mkdir -p _build/texinfo
-	$(SPHINXBUILD) -b texinfo $(ALLSPHINXOPTS) _build/texinfo
+	mkdir -p $(BUILDDIR)/texinfo
+	$(SPHINXBUILD) -b texinfo $(ALLSPHINXOPTS) $(SOURCEDIR) $(BUILDDIR)/texinfo
 	@echo
-	@echo "Build finished. The Texinfo files are in _build/texinfo."
+	@echo "Build finished. The Texinfo files are in $(BUILDDIR)/texinfo."
 	@echo "Run \`make' in that directory to run these through makeinfo" \
 	      "(use \`make info' here to do that automatically)."
 
 info:
-	mkdir -p _build/texinfo
-	$(SPHINXBUILD) -b texinfo $(ALLSPHINXOPTS) _build/texinfo
+	mkdir -p $(BUILDDIR)/texinfo
+	$(SPHINXBUILD) -b texinfo $(ALLSPHINXOPTS) $(SOURCEDIR) $(BUILDDIR)/texinfo
 	@echo "Running Texinfo files through makeinfo..."
-	make -C _build/texinfo info
-	@echo "makeinfo finished; the Info files are in _build/texinfo."
+	make -C $(BUILDDIR)/texinfo info
+	@echo "makeinfo finished; the Info files are in $(BUILDDIR)/texinfo."
+
+man: man/isympy.xml
+	docbook2x-man --to-stdout $< > man/isympy.1
+
+logo: $(BUILDDIR)/logo/*.png
+
+$(BUILDDIR)/logo/sympy-notailtext-favicon.ico: logo
+
+$(BUILDDIR)/logo/*.png: $(SOURCEDIR)/logo/sympy.svg
+	mkdir -p $(BUILDDIR)/logo
+	$(PYTHON) ./generate_logos.py -d
+	@echo
+	@echo "Logo generated."
+
+autobuild:
+	sphinx-autobuild $(ALLSPHINXOPTS) $(SPHINXSAVEWARNINGS) $(SOURCEDIR) $(BUILDDIR)/html

@@ -1,4 +1,7 @@
-from sympy import Symbol, Dummy, Rational, exp
+from __future__ import annotations
+from sympy.core.numbers import Rational
+from sympy.core.symbol import (Dummy, Symbol)
+from sympy.functions.elementary.exponential import exp
 
 
 def test_equal():
@@ -43,7 +46,7 @@ def test_expevalbug():
 
 
 def test_cmp_bug1():
-    class T(object):
+    class T:
         pass
 
     t = T()
@@ -54,7 +57,7 @@ def test_cmp_bug1():
 
 
 def test_cmp_bug2():
-    class T(object):
+    class T:
         pass
 
     t = T()
@@ -63,10 +66,10 @@ def test_cmp_bug2():
     assert (Symbol != t)
 
 
-def test_cmp_bug1258():
+def test_cmp_issue_4357():
     """ Check that Basic subclasses can be compared with sympifiable objects.
 
-    http://code.google.com/p/sympy/issues/detail?id=1258
+    https://github.com/sympy/sympy/issues/4357
     """
     assert not (Symbol == 1)
     assert (Symbol != 1)

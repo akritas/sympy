@@ -1,6 +1,4 @@
-# -*- coding: utf-8 -*-
-
-"""This is rule-based deduction system for SymPy
+r"""This is rule-based deduction system for SymPy
 
 The whole thing is split into two parts
 
@@ -9,7 +7,7 @@ The whole thing is split into two parts
 
 For rule-based inference engines, the classical work is RETE algorithm [1],
 [2] Although we are not implementing it in full (or even significantly)
-it's still still worth a read to understand the underlying ideas.
+it's still worth a read to understand the underlying ideas.
 
 In short, every rule in a system of rules is one of two forms:
 
@@ -40,19 +38,19 @@ Here we take minimalistic approach to get something usable first.
 Some references on the topic
 ----------------------------
 
-[1] http://en.wikipedia.org/wiki/Rete_algorithm
+[1] https://en.wikipedia.org/wiki/Rete_algorithm
 [2] http://reports-archive.adm.cs.cmu.edu/anon/1995/CMU-CS-95-113.pdf
 
-http://en.wikipedia.org/wiki/Propositional_formula
-http://en.wikipedia.org/wiki/Inference_rule
-http://en.wikipedia.org/wiki/List_of_rules_of_inference
+https://en.wikipedia.org/wiki/Propositional_formula
+https://en.wikipedia.org/wiki/Inference_rule
+https://en.wikipedia.org/wiki/List_of_rules_of_inference
 """
-from __future__ import print_function, division
+from __future__ import annotations
 
 from collections import defaultdict
+from typing import Iterator
 
 from .logic import Logic, And, Or, Not
-from sympy.core.compatibility import string_types
 
 
 def _base_fact(atom):
@@ -75,6 +73,26 @@ def _as_pair(atom):
 # XXX this prepares forward-chaining rules for alpha-network
 
 
+def transitive_closure(implications):
+    """
+    Computes the transitive closure of a list of implications
+
+    Uses Warshall's algorithm, as described at
+    http://www.cs.hope.edu/~cusack/Notes/Notes/DiscreteMath/Warshall.pdf.
+    """
+    full_implications = set(implications)
+    literals = set().union(*map(set, full_implications))
+
+    for k in literals:
+        for i in literals:
+            if (i, k) in full_implications:
+                for j in literals:
+                    if (k, j) in full_implications:
+                        full_implications.add((i, j))
+
+    return full_implications
+
+
 def deduce_alpha_implications(implications):
     """deduce all implications
 
@@ -95,22 +113,14 @@ def deduce_alpha_implications(implications):
        implications: [] of (a,b)
        return:       {} of a -> set([b, c, ...])
     """
+    implications = implications + [(Not(j), Not(i)) for (i, j) in implications]
     res = defaultdict(set)
-    for a, b in implications:
+    full_implications = transitive_closure(implications)
+    for a, b in full_implications:
         if a == b:
             continue    # skip a->a cyclic input
 
         res[a].add(b)
-
-        # (x >> a) & (a >> b) => x >> b
-        for fact in res:
-            implied = res[fact]
-            if a in implied:
-                implied.add(b)
-
-        # (a >> b) & (b >> x) => a >> x
-        if b in res:
-            res[a] |= res[b]
 
     # Clean up tautologies and check consistency
     for a, impl in res.items():
@@ -124,7 +134,8 @@ def deduce_alpha_implications(implications):
 
 
 def apply_beta_to_alpha_route(alpha_implications, beta_rules):
-    """apply additional beta-rules (And conditions) to already-built alpha implication tables
+    """apply additional beta-rules (And conditions) to already-built
+    alpha implication tables
 
        TODO: write about
 
@@ -166,16 +177,17 @@ def apply_beta_to_alpha_route(alpha_implications, beta_rules):
         seen_static_extension = False
 
         for bcond, bimpl in beta_rules:
-            assert isinstance(bcond, And)
+            if not isinstance(bcond, And):
+                raise TypeError("Cond is not And")
             bargs = set(bcond.args)
             for x, (ximpls, bb) in x_impl.items():
-                x_all = ximpls | set([x])
+                x_all = ximpls | {x}
                 # A: ... -> a   B: &(...) -> a  is non-informative
                 if bimpl not in x_all and bargs.issubset(x_all):
                     ximpls.add(bimpl)
 
                     # we introduced new implication - now we have to restore
-                    # completness of the whole set.
+                    # completeness of the whole set.
                     bimpl_impl = x_impl.get(bimpl)
                     if bimpl_impl is not None:
                         ximpls |= bimpl_impl[0]
@@ -185,7 +197,7 @@ def apply_beta_to_alpha_route(alpha_implications, beta_rules):
     for bidx, (bcond, bimpl) in enumerate(beta_rules):
         bargs = set(bcond.args)
         for x, (ximpls, bb) in x_impl.items():
-            x_all = ximpls | set([x])
+            x_all = ximpls | {x}
             # A: ... -> a   B: &(...) -> a      (non-informative)
             if bimpl in x_all:
                 continue
@@ -225,7 +237,11 @@ def rules_2prereq(rules):
     """
     prereq = defaultdict(set)
     for (a, _), impl in rules.items():
+        if isinstance(a, Not):
+            a = a.args[0]
         for (i, _) in impl:
+            if isinstance(i, Not):
+                i = i.args[0]
             prereq[i].add(a)
     return prereq
 
@@ -239,7 +255,7 @@ class TautologyDetected(Exception):
     pass
 
 
-class Prover(object):
+class Prover:
     """ai - prover of logic rules
 
        given a set of initial rules, Prover tries to prove all possible rules
@@ -280,7 +296,7 @@ class Prover(object):
             if isinstance(a, And):
                 rules_beta.append((a, b))
             else:
-                rules_alpha.append((a, b) )
+                rules_alpha.append((a, b))
         return rules_alpha, rules_beta
 
     @property
@@ -313,24 +329,27 @@ class Prover(object):
 
         # a -> b & c    -->  a -> b  ;  a -> c
         # (?) FIXME this is only correct when b & c != null !
+
         if isinstance(b, And):
-            for barg in b.args:
+            sorted_bargs = sorted(b.args, key=str)
+            for barg in sorted_bargs:
                 self.process_rule(a, barg)
 
         # a -> b | c    -->  !b & !c -> !a
         #               -->   a & !b -> c
         #               -->   a & !c -> b
         elif isinstance(b, Or):
+            sorted_bargs = sorted(b.args, key=str)
             # detect tautology first
             if not isinstance(a, Logic):    # Atom
                 # tautology:  a -> a|c|...
-                if a in b.args:
+                if a in sorted_bargs:
                     raise TautologyDetected(a, b, 'a -> a|c|...')
             self.process_rule(And(*[Not(barg) for barg in b.args]), Not(a))
 
-            for bidx in range(len(b.args)):
-                barg = b.args[bidx]
-                brest = b.args[:bidx] + b.args[bidx + 1:]
+            for bidx in range(len(sorted_bargs)):
+                barg = sorted_bargs[bidx]
+                brest = sorted_bargs[:bidx] + sorted_bargs[bidx + 1:]
                 self.process_rule(And(a, Not(barg)), Or(*brest))
 
         # left part
@@ -338,15 +357,17 @@ class Prover(object):
         # a & b -> c    -->  IRREDUCIBLE CASE -- WE STORE IT AS IS
         #                    (this will be the basis of beta-network)
         elif isinstance(a, And):
-            if b in a.args:
+            sorted_aargs = sorted(a.args, key=str)
+            if b in sorted_aargs:
                 raise TautologyDetected(a, b, 'a & b -> a')
             self.proved_rules.append((a, b))
             # XXX NOTE at present we ignore  !c -> !a | !b
 
         elif isinstance(a, Or):
-            if b in a.args:
+            sorted_aargs = sorted(a.args, key=str)
+            if b in sorted_aargs:
                 raise TautologyDetected(a, b, 'a | b -> a')
-            for aarg in a.args:
+            for aarg in sorted_aargs:
                 self.process_rule(aarg, b)
 
         else:
@@ -357,12 +378,12 @@ class Prover(object):
 ########################################
 
 
-class FactRules(object):
+class FactRules:
     """Rules that describe how to deduce facts in logic space
 
-       When defined, these rules allow implications to quickly be determined for a
-       set of facts. For this precomputed deduction tables are used. see
-       `deduce_all_facts`   (forward-chaining)
+       When defined, these rules allow implications to quickly be determined
+       for a set of facts. For this precomputed deduction tables are used.
+       see `deduce_all_facts`   (forward-chaining)
 
        Also it is possible to gather prerequisites for a fact, which is tried
        to be proven.    (backward-chaining)
@@ -391,7 +412,7 @@ class FactRules(object):
     def __init__(self, rules):
         """Compile rules into internal lookup tables"""
 
-        if isinstance(rules, string_types):
+        if isinstance(rules, str):
             rules = rules.splitlines()
 
         # --- parse and process rules ---
@@ -416,24 +437,25 @@ class FactRules(object):
         self.beta_rules = []
         for bcond, bimpl in P.rules_beta:
             self.beta_rules.append(
-                (set(_as_pair(a) for a in bcond.args), _as_pair(bimpl)))
+                ({_as_pair(a) for a in bcond.args}, _as_pair(bimpl)))
 
         # deduce alpha implications
         impl_a = deduce_alpha_implications(P.rules_alpha)
 
         # now:
         # - apply beta rules to alpha chains  (static extension), and
-        # - further associate beta rules to alpha chain (for inference at runtime)
+        # - further associate beta rules to alpha chain (for inference
+        # at runtime)
         impl_ab = apply_beta_to_alpha_route(impl_a, P.rules_beta)
 
         # extract defined fact names
-        self.defined_facts = set(_base_fact(k) for k in impl_ab.keys())
+        self.defined_facts = {_base_fact(k) for k in impl_ab.keys()}
 
         # build rels (forward chains)
         full_implications = defaultdict(set)
         beta_triggers = defaultdict(set)
         for k, (impl, betaidxs) in impl_ab.items():
-            full_implications[_as_pair(k)] = set(_as_pair(i) for i in impl)
+            full_implications[_as_pair(k)] = {_as_pair(i) for i in impl}
             beta_triggers[_as_pair(k)] = betaidxs
 
         self.full_implications = full_implications
@@ -446,6 +468,100 @@ class FactRules(object):
             prereq[k] |= pitems
         self.prereq = prereq
 
+    def _to_python(self) -> str:
+        """ Generate a string with plain python representation of the instance """
+        return '\n'.join(self.print_rules())
+
+    @classmethod
+    def _from_python(cls, data : dict):
+        """ Generate an instance from the plain python representation """
+        self = cls('')
+        for key in ['full_implications', 'beta_triggers', 'prereq']:
+            d=defaultdict(set)
+            d.update(data[key])
+            setattr(self, key, d)
+        self.beta_rules = data['beta_rules']
+        self.defined_facts = set(data['defined_facts'])
+
+        return self
+
+    def _defined_facts_lines(self):
+        yield 'defined_facts = ['
+        for fact in sorted(self.defined_facts):
+            yield f'    {fact!r},'
+        yield '] # defined_facts'
+
+    def _full_implications_lines(self):
+        yield 'full_implications = dict( ['
+        for fact in sorted(self.defined_facts):
+            for value in (True, False):
+                yield f'    # Implications of {fact} = {value}:'
+                yield f'    (({fact!r}, {value!r}), set( ('
+                implications = self.full_implications[(fact, value)]
+                for implied in sorted(implications):
+                    yield f'        {implied!r},'
+                yield '       ) ),'
+                yield '     ),'
+        yield ' ] ) # full_implications'
+
+    def _prereq_lines(self):
+        yield 'prereq = {'
+        yield ''
+        for fact in sorted(self.prereq):
+            yield f'    # facts that could determine the value of {fact}'
+            yield f'    {fact!r}: {{'
+            for pfact in sorted(self.prereq[fact]):
+                yield f'        {pfact!r},'
+            yield '    },'
+            yield ''
+        yield '} # prereq'
+
+    def _beta_rules_lines(self):
+        reverse_implications = defaultdict(list)
+        for n, (pre, implied) in enumerate(self.beta_rules):
+            reverse_implications[implied].append((pre, n))
+
+        yield '# Note: the order of the beta rules is used in the beta_triggers'
+        yield 'beta_rules = ['
+        yield ''
+        m = 0
+        indices = {}
+        for implied in sorted(reverse_implications):
+            fact, value = implied
+            yield f'    # Rules implying {fact} = {value}'
+            for pre, n in reverse_implications[implied]:
+                indices[n] = m
+                m += 1
+                setstr = ", ".join(map(str, sorted(pre)))
+                yield f'    ({{{setstr}}},'
+                yield f'        {implied!r}),'
+            yield ''
+        yield '] # beta_rules'
+
+        yield 'beta_triggers = {'
+        for query in sorted(self.beta_triggers):
+            fact, value = query
+            triggers = [indices[n] for n in self.beta_triggers[query]]
+            yield f'    {query!r}: {triggers!r},'
+        yield '} # beta_triggers'
+
+    def print_rules(self) -> Iterator[str]:
+        """ Returns a generator with lines to represent the facts and rules """
+        yield from self._defined_facts_lines()
+        yield ''
+        yield ''
+        yield from self._full_implications_lines()
+        yield ''
+        yield ''
+        yield from self._prereq_lines()
+        yield ''
+        yield ''
+        yield from self._beta_rules_lines()
+        yield ''
+        yield ''
+        yield "generated_assumptions = {'defined_facts': defined_facts, 'full_implications': full_implications,"
+        yield "               'prereq': prereq, 'beta_rules': beta_rules, 'beta_triggers': beta_triggers}"
+
 
 class InconsistentAssumptions(ValueError):
     def __str__(self):
@@ -457,6 +573,10 @@ class FactKB(dict):
     """
     A simple propositional knowledge base relying on compiled inference rules.
     """
+    def __str__(self):
+        return '{\n%s}' % ',\n'.join(
+            ["\t%s: %s" % i for i in sorted(self.items())])
+
     def __init__(self, rules):
         self.rules = rules
 

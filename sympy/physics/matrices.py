@@ -1,17 +1,18 @@
 """Known matrices related to physics"""
+from __future__ import annotations
 
-from __future__ import print_function, division
-
-from sympy import Matrix, I
+from sympy.core.numbers import I
+from sympy.matrices.dense import MutableDenseMatrix as Matrix
+from sympy.utilities.decorator import deprecated
 
 
 def msigma(i):
-    """Returns a Pauli matrix sigma_i. i=1,2,3
+    r"""Returns a Pauli matrix `\sigma_i` with `i=1,2,3`.
 
     References
     ==========
 
-    .. [1] http://en.wikipedia.org/wiki/Pauli_matrices
+    .. [1] https://en.wikipedia.org/wiki/Pauli_matrices
 
     Examples
     ========
@@ -23,20 +24,20 @@ def msigma(i):
     [1, 0]])
     """
     if i == 1:
-        mat = ( (
+        mat = (
             (0, 1),
             (1, 0)
-        ) )
+        )
     elif i == 2:
-        mat = ( (
+        mat = (
             (0, -I),
             (I, 0)
-        ) )
+        )
     elif i == 3:
-        mat = ( (
+        mat = (
             (1, 0),
             (0, -1)
-        ) )
+        )
     else:
         raise IndexError("Invalid Pauli index")
     return Matrix(mat)
@@ -44,25 +45,21 @@ def msigma(i):
 
 def pat_matrix(m, dx, dy, dz):
     """Returns the Parallel Axis Theorem matrix to translate the inertia
-    matrix a distance of (dx, dy, dz) for a body of mass m.
+    matrix a distance of `(dx, dy, dz)` for a body of mass m.
 
     Examples
-    --------
-    If the point we want the inertia about is a distance of 2 units of
-    length and 1 unit along the x-axis we get:
+    ========
+
+    To translate a body having a mass of 2 units a distance of 1 unit along
+    the `x`-axis we get:
+
     >>> from sympy.physics.matrices import pat_matrix
-    >>> pat_matrix(2,1,0,0)
+    >>> pat_matrix(2, 1, 0, 0)
     Matrix([
     [0, 0, 0],
     [0, 2, 0],
     [0, 0, 2]])
 
-    In case we want to find the inertia along a vector of (1,1,1):
-    >>> pat_matrix(2,1,1,1)
-    Matrix([
-    [ 4, -2, -2],
-    [-2,  4, -2],
-    [-2, -2,  4]])
     """
     dxdy = -dx*dy
     dydz = -dy*dz
@@ -77,20 +74,24 @@ def pat_matrix(m, dx, dy, dz):
 
 
 def mgamma(mu, lower=False):
-    """Returns a Dirac gamma matrix gamma^mu in the standard
+    r"""Returns a Dirac gamma matrix `\gamma^\mu` in the standard
     (Dirac) representation.
 
-    If you want gamma_mu, use gamma(mu, True).
+    Explanation
+    ===========
+
+    If you want `\gamma_\mu`, use ``gamma(mu, True)``.
 
     We use a convention:
 
-    gamma^5 = I * gamma^0 * gamma^1 * gamma^2 * gamma^3
-    gamma_5 = I * gamma_0 * gamma_1 * gamma_2 * gamma_3 = - gamma^5
+    `\gamma^5 = i \cdot \gamma^0 \cdot \gamma^1 \cdot \gamma^2 \cdot \gamma^3`
+
+    `\gamma_5 = i \cdot \gamma_0 \cdot \gamma_1 \cdot \gamma_2 \cdot \gamma_3 = - \gamma^5`
 
     References
     ==========
 
-    .. [1] http://en.wikipedia.org/wiki/Gamma_matrices
+    .. [1] https://en.wikipedia.org/wiki/Gamma_matrices
 
     Examples
     ========
@@ -103,7 +104,7 @@ def mgamma(mu, lower=False):
     [ 0, -1, 0, 0],
     [-1,  0, 0, 0]])
     """
-    if not mu in [0, 1, 2, 3, 5]:
+    if mu not in (0, 1, 2, 3, 5):
         raise IndexError("Invalid Dirac index")
     if mu == 0:
         mat = (
@@ -142,7 +143,7 @@ def mgamma(mu, lower=False):
         )
     m = Matrix(mat)
     if lower:
-        if mu in [1, 2, 3, 5]:
+        if mu in (1, 2, 3, 5):
             m = -m
     return m
 
@@ -154,3 +155,23 @@ minkowski_tensor = Matrix( (
     (0, 0, -1, 0),
     (0, 0, 0, -1)
 ))
+
+
+@deprecated(
+    """
+    The sympy.physics.matrices.mdft method is deprecated. Use
+    sympy.DFT(n).as_explicit() instead.
+    """,
+    deprecated_since_version="1.9",
+    active_deprecations_target="deprecated-physics-mdft",
+)
+def mdft(n):
+    r"""
+    .. deprecated:: 1.9
+
+       Use DFT from sympy.matrices.expressions.fourier instead.
+
+       To get identical behavior to ``mdft(n)``, use ``DFT(n).as_explicit()``.
+    """
+    from sympy.matrices.expressions.fourier import DFT
+    return DFT(n).as_mutable()

@@ -1,10 +1,7 @@
-from __future__ import print_function, division
-
-from sympy import Basic, Q
-from sympy.functions import adjoint, conjugate
-
+from __future__ import annotations
+from sympy.core.basic import Basic
 from sympy.matrices.expressions.matexpr import MatrixExpr
-from sympy.matrices import MatrixBase
+
 
 class Transpose(MatrixExpr):
     """
@@ -17,18 +14,17 @@ class Transpose(MatrixExpr):
     Examples
     ========
 
-    >>> from sympy.matrices import MatrixSymbol, Transpose
-    >>> from sympy.functions import transpose
+    >>> from sympy import MatrixSymbol, Transpose, transpose
     >>> A = MatrixSymbol('A', 3, 5)
     >>> B = MatrixSymbol('B', 5, 3)
     >>> Transpose(A)
-    A'
+    A.T
     >>> A.T == transpose(A) == Transpose(A)
     True
     >>> Transpose(A*B)
-    (A*B)'
+    (A*B).T
     >>> transpose(A*B)
-    B'*A'
+    B.T*A.T
 
     """
     is_Transpose = True
@@ -37,10 +33,11 @@ class Transpose(MatrixExpr):
         arg = self.arg
         if hints.get('deep', True) and isinstance(arg, Basic):
             arg = arg.doit(**hints)
-        try:
-            result = arg._eval_transpose()
+        _eval_transpose = getattr(arg, '_eval_transpose', None)
+        if _eval_transpose is not None:
+            result = _eval_transpose()
             return result if result is not None else Transpose(arg)
-        except AttributeError:
+        else:
             return Transpose(arg)
 
     @property
@@ -51,14 +48,14 @@ class Transpose(MatrixExpr):
     def shape(self):
         return self.arg.shape[::-1]
 
-    def _entry(self, i, j):
-        return self.arg._entry(j, i)
+    def _entry(self, i, j, expand=False, **kwargs):
+        return self.arg._entry(j, i, expand=expand, **kwargs)
 
     def _eval_adjoint(self):
-        return conjugate(self.arg)
+        return self.arg.conjugate()
 
     def _eval_conjugate(self):
-        return adjoint(self.arg)
+        return self.arg.adjoint()
 
     def _eval_transpose(self):
         return self.arg
@@ -71,6 +68,36 @@ class Transpose(MatrixExpr):
         from sympy.matrices.expressions.determinant import det
         return det(self.arg)
 
+    def _eval_derivative(self, x):
+        # x is a scalar:
+        d = self.arg._eval_derivative(x)
+        if d is not None:
+            return d.T
+        return None
+
+
 def transpose(expr):
-    """ Matrix transpose """
-    return Transpose(expr).doit()
+    """Matrix transpose"""
+    return Transpose(expr).doit(deep=False)
+
+
+from sympy.assumptions.ask import ask, Q
+from sympy.assumptions.refine import handlers_dict
+
+
+def refine_Transpose(expr, assumptions):
+    """
+    >>> from sympy import MatrixSymbol, Q, assuming, refine
+    >>> X = MatrixSymbol('X', 2, 2)
+    >>> X.T
+    X.T
+    >>> with assuming(Q.symmetric(X)):
+    ...     print(refine(X.T))
+    X
+    """
+    if ask(Q.symmetric(expr), assumptions):
+        return expr.arg
+
+    return expr
+
+handlers_dict['Transpose'] = refine_Transpose

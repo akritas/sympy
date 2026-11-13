@@ -1,12 +1,15 @@
-from sympy import Symbol, Integer, Mul
+from __future__ import annotations
+from sympy.core.mul import Mul
+from sympy.core.numbers import Integer
+from sympy.core.symbol import Symbol
 from sympy.utilities import numbered_symbols
-from sympy.physics.quantum.gate import (X, Y, Z, H, S, T, CNOT,
-        CGate)
+from sympy.physics.quantum.gate import X, Y, Z, H, CNOT, CGate
 from sympy.physics.quantum.identitysearch import bfs_identity_search
 from sympy.physics.quantum.circuitutils import (kmp_table, find_subcircuit,
         replace_subcircuit, convert_to_symbolic_indices,
         convert_to_real_indices, random_reduce, random_insert,
         flatten_ids)
+from sympy.testing.pytest import slow
 
 
 def create_gate_sequence(qubit=0):
@@ -326,6 +329,7 @@ def test_convert_to_real_indices():
     assert actual == expected
 
 
+@slow
 def test_random_reduce():
     x = X(0)
     y = Y(0)
@@ -362,6 +366,7 @@ def test_random_reduce():
     assert random_reduce(circuit, ids, seed=seq) == expected
 
 
+@slow
 def test_random_insert():
     x = X(0)
     y = Y(0)
